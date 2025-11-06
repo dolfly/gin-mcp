@@ -52,6 +52,8 @@ type Config struct {
 	BaseURL           string
 	IncludeOperations []string
 	ExcludeOperations []string
+	IncludeTags       []string
+	ExcludeTags       []string
 }
 
 // New creates a new GinMCP instance
@@ -472,10 +474,32 @@ func (m *GinMCP) filterTools() {
 	var filteredTools []types.Tool
 	config := m.config // Use the GinMCP config
 
-	// Filter by operations
-	if len(config.IncludeOperations) > 0 {
+	// Work with local copies to avoid mutating the caller's config
+	includeOps := config.IncludeOperations
+	includeTags := config.IncludeTags
+	excludeOps := config.ExcludeOperations
+	excludeTags := config.ExcludeTags
+
+	// Check for conflicting inclusion filters (prefer operations over tags)
+	if len(includeOps) > 0 && len(includeTags) > 0 {
+		if isDebugMode() {
+			log.Printf("Warning: Both IncludeOperations and IncludeTags are set. Preferring IncludeOperations.")
+		}
+		includeTags = nil
+	}
+
+	// Check for conflicting exclusion filters (prefer operations over tags)
+	if len(excludeOps) > 0 && len(excludeTags) > 0 {
+		if isDebugMode() {
+			log.Printf("Warning: Both ExcludeOperations and ExcludeTags are set. Preferring ExcludeOperations.")
+		}
+		excludeTags = nil
+	}
+
+	// Step 1: Apply inclusion filters (operations take precedence over tags)
+	if len(includeOps) > 0 {
 		includeMap := make(map[string]bool)
-		for _, op := range config.IncludeOperations {
+		for _, op := range includeOps {
 			includeMap[op] = true
 		}
 		for _, tool := range m.tools {
@@ -484,12 +508,27 @@ func (m *GinMCP) filterTools() {
 			}
 		}
 		m.tools = filteredTools
-		return // Include filter takes precedence
+		filteredTools = []types.Tool{}
+	} else if len(includeTags) > 0 {
+		// Include tools that have at least one matching tag
+		includeTagsMap := make(map[string]bool)
+		for _, tag := range includeTags {
+			includeTagsMap[tag] = true
+		}
+		for _, tool := range m.tools {
+			if hasMatchingTag(tool.Tags, includeTagsMap) {
+				filteredTools = append(filteredTools, tool)
+			}
+		}
+		m.tools = filteredTools
+		filteredTools = []types.Tool{}
 	}
 
-	if len(config.ExcludeOperations) > 0 {
+	// Step 2: Apply exclusion filters (operations take precedence over tags)
+	// Exclusion always wins - it runs on the result of inclusion filtering
+	if len(excludeOps) > 0 {
 		excludeMap := make(map[string]bool)
-		for _, op := range config.ExcludeOperations {
+		for _, op := range excludeOps {
 			excludeMap[op] = true
 		}
 		for _, tool := range m.tools {
@@ -498,7 +537,29 @@ func (m *GinMCP) filterTools() {
 			}
 		}
 		m.tools = filteredTools
+	} else if len(excludeTags) > 0 {
+		// Exclude tools that have at least one matching tag
+		excludeTagsMap := make(map[string]bool)
+		for _, tag := range excludeTags {
+			excludeTagsMap[tag] = true
+		}
+		for _, tool := range m.tools {
+			if !hasMatchingTag(tool.Tags, excludeTagsMap) {
+				filteredTools = append(filteredTools, tool)
+			}
+		}
+		m.tools = filteredTools
 	}
+}
+
+// hasMatchingTag checks if any tag in the toolTags slice exists in the filterTags map
+func hasMatchingTag(toolTags []string, filterTags map[string]bool) bool {
+	for _, tag := range toolTags {
+		if filterTags[tag] {
+			return true
+		}
+	}
+	return false
 }
 
 // ExecuteToolWithDynamicURL executes a tool with a dynamically resolved baseURL.

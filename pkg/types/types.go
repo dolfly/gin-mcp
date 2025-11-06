@@ -57,13 +57,15 @@ type Tool struct {
 	Name        string      `json:"name"`                  // Unique identifier for the tool
 	Description string      `json:"description,omitempty"` // Human-readable description
 	InputSchema *JSONSchema `json:"inputSchema"`           // Schema for the tool's input parameters
+	Tags        []string    `json:"tags,omitempty"`        // Tags for filtering tools
 	// Add other fields as needed by the MCP spec (e.g., outputSchema)
 }
 
 // Operation represents the mapping from a tool name (operation ID) to its underlying HTTP endpoint
 type Operation struct {
-	Method string // HTTP Method (GET, POST, etc.)
-	Path   string // Gin route path (e.g., /users/:id)
+	Method string   // HTTP Method (GET, POST, etc.)
+	Path   string   // Gin route path (e.g., /users/:id)
+	Tags   []string // Tags for filtering operations
 }
 
 // RegisteredSchemaInfo holds Go types associated with a specific route for schema generation

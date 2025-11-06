@@ -174,16 +174,16 @@ func TestSetupServerAndFilter(t *testing.T) {
 	assert.False(t, toolExists(mcp.tools, "POST_items_id"), "Exclude filter should remove POST_items_id")
 	assert.False(t, toolExists(mcp.tools, "GET_mcp_ignore"), "Exclude filter should remove GET_mcp_ignore")
 
-	// --- Test Include takes precedence over Exclude ---
+	// --- Test Exclusion Wins Over Inclusion (operations) ---
 	// Re-run setup to get all tools, then filter
 	err = mcp.SetupServer()
 	assert.NoError(t, err)
-	mcp.config.IncludeOperations = []string{"GET_items"}
-	mcp.config.ExcludeOperations = []string{"GET_items", "GET_users"} // Exclude should be ignored
-	mcp.filterTools()                                                 // Filter the full set
-	assert.Len(t, mcp.tools, 1, "Exclude should be ignored if Include is present")
-	assert.True(t, toolExists(mcp.tools, "GET_items"), "Include should keep GET_items even if excluded")
-	assert.False(t, toolExists(mcp.tools, "GET_users"), "Include should filter out non-included GET_users")
+	mcp.config.IncludeOperations = []string{"GET_items", "GET_users"}
+	mcp.config.ExcludeOperations = []string{"GET_items"} // Exclude should win over include
+	mcp.filterTools()                                    // Filter the full set
+	assert.Len(t, mcp.tools, 1, "Exclusion should win over inclusion")
+	assert.False(t, toolExists(mcp.tools, "GET_items"), "Exclude should remove GET_items even though it's included")
+	assert.True(t, toolExists(mcp.tools, "GET_users"), "Include should keep GET_users (not excluded)")
 	assert.False(t, toolExists(mcp.tools, "POST_items_id"), "Include should filter out non-included POST_items_id")
 	assert.False(t, toolExists(mcp.tools, "GET_mcp_ignore"), "Include should filter out non-included GET_mcp_ignore")
 
@@ -193,6 +193,234 @@ func TestSetupServerAndFilter(t *testing.T) {
 	mcp.config.ExcludeOperations = []string{"GET_users"}
 	mcp.filterTools()
 	assert.Len(t, mcp.tools, 0, "Filtering should not panic or error with no tools initially")
+}
+
+func TestSetupServerAndFilter_Tags(t *testing.T) {
+	engine := gin.New()
+	
+	// Register handlers with tags
+	engine.GET("/items", listItems)       // tags: public, internal
+	engine.GET("/items/:id", getItem)     // tags: public
+	engine.POST("/items", createItem)     // tags: admin
+	engine.DELETE("/items/:id", deleteItem) // tags: admin, internal
+	engine.GET("/health", healthCheck)    // no tags
+
+	// --- Test IncludeTags Filter ---
+	t.Run("IncludeTags_PublicOnly", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			IncludeTags: []string{"public"},
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Should include: listItems (public, internal) and getItem (public)
+		assert.Len(t, mcp.tools, 2, "Should have 2 tools with 'public' tag")
+		assert.True(t, toolExists(mcp.tools, "GET_items"), "Should include GET_items (has public tag)")
+		assert.True(t, toolExists(mcp.tools, "GET_items_id"), "Should include GET_items_id (has public tag)")
+		assert.False(t, toolExists(mcp.tools, "POST_items"), "Should exclude POST_items (no public tag)")
+		assert.False(t, toolExists(mcp.tools, "DELETE_items_id"), "Should exclude DELETE_items_id (no public tag)")
+		assert.False(t, toolExists(mcp.tools, "GET_health"), "Should exclude GET_health (no tags)")
+	})
+
+	t.Run("IncludeTags_AdminOnly", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			IncludeTags: []string{"admin"},
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Should include: createItem (admin) and deleteItem (admin, internal)
+		assert.Len(t, mcp.tools, 2, "Should have 2 tools with 'admin' tag")
+		assert.True(t, toolExists(mcp.tools, "POST_items"), "Should include POST_items (has admin tag)")
+		assert.True(t, toolExists(mcp.tools, "DELETE_items_id"), "Should include DELETE_items_id (has admin tag)")
+		assert.False(t, toolExists(mcp.tools, "GET_items"), "Should exclude GET_items (no admin tag)")
+	})
+
+	t.Run("IncludeTags_Multiple", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			IncludeTags: []string{"public", "admin"},
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Should include: listItems, getItem, createItem, deleteItem (all have public OR admin)
+		assert.Len(t, mcp.tools, 4, "Should have 4 tools with 'public' or 'admin' tags")
+		assert.True(t, toolExists(mcp.tools, "GET_items"))
+		assert.True(t, toolExists(mcp.tools, "GET_items_id"))
+		assert.True(t, toolExists(mcp.tools, "POST_items"))
+		assert.True(t, toolExists(mcp.tools, "DELETE_items_id"))
+		assert.False(t, toolExists(mcp.tools, "GET_health"), "Should exclude GET_health (no matching tags)")
+	})
+
+	// --- Test ExcludeTags Filter ---
+	t.Run("ExcludeTags_InternalOnly", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			ExcludeTags: []string{"internal"},
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Should exclude: listItems and deleteItem (both have 'internal' tag)
+		assert.Len(t, mcp.tools, 3, "Should have 3 tools without 'internal' tag")
+		assert.False(t, toolExists(mcp.tools, "GET_items"), "Should exclude GET_items (has internal tag)")
+		assert.True(t, toolExists(mcp.tools, "GET_items_id"), "Should include GET_items_id (no internal tag)")
+		assert.True(t, toolExists(mcp.tools, "POST_items"), "Should include POST_items (no internal tag)")
+		assert.False(t, toolExists(mcp.tools, "DELETE_items_id"), "Should exclude DELETE_items_id (has internal tag)")
+		assert.True(t, toolExists(mcp.tools, "GET_health"), "Should include GET_health (no tags, not excluded)")
+	})
+
+	t.Run("ExcludeTags_AdminOnly", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			ExcludeTags: []string{"admin"},
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Should exclude: createItem and deleteItem (both have 'admin' tag)
+		assert.Len(t, mcp.tools, 3, "Should have 3 tools without 'admin' tag")
+		assert.True(t, toolExists(mcp.tools, "GET_items"))
+		assert.True(t, toolExists(mcp.tools, "GET_items_id"))
+		assert.False(t, toolExists(mcp.tools, "POST_items"), "Should exclude POST_items (has admin tag)")
+		assert.False(t, toolExists(mcp.tools, "DELETE_items_id"), "Should exclude DELETE_items_id (has admin tag)")
+		assert.True(t, toolExists(mcp.tools, "GET_health"))
+	})
+
+	// --- Test Combined Include and Exclude Tags ---
+	t.Run("IncludeTags_and_ExcludeTags", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			IncludeTags: []string{"public", "admin"}, // Include public and admin
+			ExcludeTags: []string{"internal"},         // But exclude internal
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Include: listItems, getItem, createItem, deleteItem (all have public OR admin)
+		// Then exclude: listItems and deleteItem (both have internal)
+		// Result: getItem, createItem
+		assert.Len(t, mcp.tools, 2, "Should have 2 tools after include and exclude filters")
+		assert.False(t, toolExists(mcp.tools, "GET_items"), "Should exclude GET_items (has internal tag)")
+		assert.True(t, toolExists(mcp.tools, "GET_items_id"), "Should include GET_items_id (public, not internal)")
+		assert.True(t, toolExists(mcp.tools, "POST_items"), "Should include POST_items (admin, not internal)")
+		assert.False(t, toolExists(mcp.tools, "DELETE_items_id"), "Should exclude DELETE_items_id (has internal tag)")
+		assert.False(t, toolExists(mcp.tools, "GET_health"), "Should exclude GET_health (no matching include tags)")
+	})
+
+	// --- Test Precedence: Operations vs Tags ---
+	t.Run("IncludeOperations_Takes_Precedence_Over_IncludeTags", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			IncludeOperations: []string{"GET_items"},
+			IncludeTags:       []string{"admin"}, // Should be ignored
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Only GET_items should be included (operations take precedence)
+		assert.Len(t, mcp.tools, 1, "IncludeOperations should take precedence")
+		assert.True(t, toolExists(mcp.tools, "GET_items"))
+		assert.False(t, toolExists(mcp.tools, "POST_items"), "Should not include admin-tagged tools")
+	})
+
+	t.Run("ExcludeOperations_Takes_Precedence_Over_ExcludeTags", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			ExcludeOperations: []string{"GET_health"},
+			ExcludeTags:       []string{"admin"}, // Should be ignored
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// All tools except GET_health should be included (operations take precedence over tags)
+		assert.Len(t, mcp.tools, 4, "ExcludeOperations should take precedence")
+		assert.True(t, toolExists(mcp.tools, "GET_items"))
+		assert.True(t, toolExists(mcp.tools, "GET_items_id"))
+		assert.True(t, toolExists(mcp.tools, "POST_items"), "Should include admin-tagged tools (ExcludeTags ignored)")
+		assert.True(t, toolExists(mcp.tools, "DELETE_items_id"), "Should include admin-tagged tools (ExcludeTags ignored)")
+		assert.False(t, toolExists(mcp.tools, "GET_health"))
+	})
+
+	// --- Test Exclusion Wins Over Inclusion ---
+	t.Run("ExcludeTags_Wins_Over_IncludeTags", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			IncludeTags: []string{"public", "internal"}, // Include public and internal
+			ExcludeTags: []string{"internal"},            // But exclude internal
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Include: listItems (public+internal), getItem (public), deleteItem (admin+internal)
+		// Then exclude: listItems and deleteItem (both have internal)
+		// Result: only getItem
+		assert.Len(t, mcp.tools, 1, "Exclusion should win over inclusion")
+		assert.False(t, toolExists(mcp.tools, "GET_items"), "Should exclude despite being included")
+		assert.True(t, toolExists(mcp.tools, "GET_items_id"), "Should include (public, not internal)")
+		assert.False(t, toolExists(mcp.tools, "DELETE_items_id"), "Should exclude despite being included")
+	})
+
+	t.Run("ExcludeOperations_Wins_Over_IncludeOperations", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			IncludeOperations: []string{"GET_items", "POST_items"},
+			ExcludeOperations: []string{"GET_items"}, // Exclude one of the included
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Include: GET_items, POST_items
+		// Then exclude: GET_items
+		// Result: only POST_items
+		assert.Len(t, mcp.tools, 1, "Exclusion should win over inclusion")
+		assert.False(t, toolExists(mcp.tools, "GET_items"), "Should exclude despite being included")
+		assert.True(t, toolExists(mcp.tools, "POST_items"), "Should keep POST_items (not excluded)")
+	})
+
+	t.Run("ExcludeTags_Works_With_IncludeOperations", func(t *testing.T) {
+		mcp := New(engine, &Config{
+			IncludeOperations: []string{"GET_items", "POST_items", "DELETE_items_id"},
+			ExcludeTags:       []string{"internal"}, // Exclude internal-tagged tools
+		})
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Include: GET_items, POST_items, DELETE_items_id
+		// Then exclude by tag: GET_items (has internal), DELETE_items_id (has internal)
+		// Result: only POST_items
+		assert.Len(t, mcp.tools, 1, "Tag exclusion should work with operation inclusion")
+		assert.False(t, toolExists(mcp.tools, "GET_items"), "Should exclude GET_items (has internal tag)")
+		assert.True(t, toolExists(mcp.tools, "POST_items"), "Should keep POST_items (no internal tag)")
+		assert.False(t, toolExists(mcp.tools, "DELETE_items_id"), "Should exclude DELETE_items_id (has internal tag)")
+	})
+
+	// --- Test Config Not Mutated ---
+	t.Run("Config_Not_Mutated_After_SetupServer", func(t *testing.T) {
+		config := &Config{
+			IncludeOperations: []string{"GET_items"},
+			IncludeTags:       []string{"public"}, // Will be ignored but should not be cleared
+			ExcludeOperations: []string{"POST_items"},
+			ExcludeTags:       []string{"admin"}, // Will be ignored but should not be cleared
+		}
+		
+		mcp := New(engine, config)
+		err := mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		// Verify original config is not mutated
+		assert.Len(t, config.IncludeOperations, 1, "IncludeOperations should not be modified")
+		assert.Equal(t, []string{"GET_items"}, config.IncludeOperations)
+		assert.Len(t, config.IncludeTags, 1, "IncludeTags should not be cleared")
+		assert.Equal(t, []string{"public"}, config.IncludeTags)
+		assert.Len(t, config.ExcludeOperations, 1, "ExcludeOperations should not be modified")
+		assert.Equal(t, []string{"POST_items"}, config.ExcludeOperations)
+		assert.Len(t, config.ExcludeTags, 1, "ExcludeTags should not be cleared")
+		assert.Equal(t, []string{"admin"}, config.ExcludeTags)
+		
+		// Call SetupServer again and verify config is still intact
+		mcp.tools = []types.Tool{} // Force re-discovery
+		err = mcp.SetupServer()
+		assert.NoError(t, err)
+		
+		assert.Len(t, config.IncludeTags, 1, "IncludeTags should still be intact after second call")
+		assert.Equal(t, []string{"public"}, config.IncludeTags)
+		assert.Len(t, config.ExcludeTags, 1, "ExcludeTags should still be intact after second call")
+		assert.Equal(t, []string{"admin"}, config.ExcludeTags)
+	})
 }
 
 // Helper for checking tool existence
@@ -700,4 +928,40 @@ func GetProduct(c *gin.Context) {
 // @return Created product information
 func CreateProduct(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "create product"})
+}
+
+// --- Handlers for tag filtering tests ---
+
+// listItems handles item listing
+// @summary List items
+// @tags public internal
+func listItems(c *gin.Context) {
+	c.JSON(200, gin.H{"items": []string{}})
+}
+
+// getItem handles item retrieval
+// @summary Get item
+// @tags public
+func getItem(c *gin.Context) {
+	c.JSON(200, gin.H{"item": "test"})
+}
+
+// createItem handles item creation
+// @summary Create item
+// @tags admin
+func createItem(c *gin.Context) {
+	c.JSON(200, gin.H{"created": true})
+}
+
+// deleteItem handles item deletion
+// @summary Delete item
+// @tags admin internal
+func deleteItem(c *gin.Context) {
+	c.JSON(200, gin.H{"deleted": true})
+}
+
+// healthCheck handles health checks
+// @summary Health check
+func healthCheck(c *gin.Context) {
+	c.JSON(200, gin.H{"status": "ok"})
 }

@@ -146,6 +146,18 @@ func configureMCP(r *gin.Engine) {
 
 // Handler functions
 
+// listProducts retrieves a paginated list of products with filtering and sorting
+// @summary List all products
+// @description Returns a paginated list of products with optional filtering by price, tags, and availability. Supports sorting and full-text search.
+// @param page Page number for pagination (default: 1, minimum: 1)
+// @param limit Number of items per page (default: 10, max: 100)
+// @param minPrice Minimum price filter in USD
+// @param maxPrice Maximum price filter in USD
+// @param tag Filter products by a specific tag
+// @param enabled Filter by availability status (true/false)
+// @param sortBy Field to sort by (id or price, default: id)
+// @param order Sort order (asc or desc, default: asc)
+// @tags public catalog products
 func listProducts(c *gin.Context) {
 	var params ListProductsParams
 	if err := c.ShouldBindQuery(&params); err != nil {
@@ -185,6 +197,11 @@ func listProducts(c *gin.Context) {
 	})
 }
 
+// searchProducts performs full-text search across products
+// @summary Search products
+// @description Searches for products by name and description using a full-text query
+// @param q Search query string (required) - searches product names and descriptions
+// @tags public catalog products search
 func searchProducts(c *gin.Context) {
 	query := strings.ToLower(c.Query("q"))
 	if query == "" {
@@ -208,6 +225,11 @@ func searchProducts(c *gin.Context) {
 	})
 }
 
+// getProduct retrieves a single product by its ID
+// @summary Get product details
+// @description Returns detailed information for a specific product including name, description, price, tags, and availability
+// @param id The unique product identifier
+// @tags public catalog products
 func getProduct(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	if product, exists := products[id]; exists {
@@ -217,6 +239,15 @@ func getProduct(c *gin.Context) {
 	c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
 }
 
+// createProduct adds a new product to the catalog
+// @summary Create new product
+// @description Creates a new product with the provided details and returns the created product with its assigned ID
+// @param name Product name (required)
+// @param description Detailed description of the product
+// @param price Product price in USD (required, must be >= 0)
+// @param tags Categories or labels for the product
+// @param is_enabled Whether the product is available for purchase (required)
+// @tags admin products write
 func createProduct(c *gin.Context) {
 	var product Product
 	if err := c.ShouldBindJSON(&product); err != nil {
@@ -231,6 +262,16 @@ func createProduct(c *gin.Context) {
 	c.JSON(http.StatusCreated, product)
 }
 
+// updateProduct modifies an existing product
+// @summary Update product
+// @description Updates all fields of an existing product and returns the updated product data
+// @param id The unique product identifier (path parameter)
+// @param name New product name (required)
+// @param description New detailed description
+// @param price New price in USD (required, must be >= 0)
+// @param tags New categories or labels
+// @param is_enabled New availability status (required)
+// @tags admin products write
 func updateProduct(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	if _, exists := products[id]; exists {
@@ -256,6 +297,11 @@ func updateProduct(c *gin.Context) {
 	c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
 }
 
+// deleteProduct removes a product from the catalog
+// @summary Delete product
+// @description Permanently removes a product from the catalog by its ID
+// @param id The unique product identifier
+// @tags admin products write
 func deleteProduct(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	if _, exists := products[id]; exists {

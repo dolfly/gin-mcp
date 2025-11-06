@@ -579,3 +579,101 @@ func MultipleParams(c *gin.Context) {}
 	assert.Equal(t, "User age", strings.TrimSpace(doc.Params["age"]))
 	assert.Equal(t, "User information", strings.TrimSpace(doc.Returns))
 }
+
+func TestParseHandlerComments_Tags(t *testing.T) {
+	tmpFile := `package test
+
+// HandlerWithSpaceSeparatedTags handles something
+// @summary Handler with space-separated tags
+// @tags public users
+func HandlerWithSpaceSeparatedTags(c *gin.Context) {}
+
+// HandlerWithCommaSeparatedTags handles something
+// @summary Handler with comma-separated tags
+// @tags public,users,admin
+func HandlerWithCommaSeparatedTags(c *gin.Context) {}
+
+// HandlerWithMixedTags handles something
+// @summary Handler with mixed tags
+// @tags public, users admin
+func HandlerWithMixedTags(c *gin.Context) {}
+
+// HandlerWithSingleTag handles something
+// @summary Handler with single tag
+// @tags internal
+func HandlerWithSingleTag(c *gin.Context) {}
+
+// HandlerNoTags handles something
+// @summary Handler with no tags
+func HandlerNoTags(c *gin.Context) {}
+
+// HandlerEmptyTags handles something
+// @summary Handler with empty tags line
+// @tags
+func HandlerEmptyTags(c *gin.Context) {}
+
+// HandlerWithExtraSpaces handles something
+// @summary Handler with extra spaces in tags
+// @tags   public   ,   users   admin   
+func HandlerWithExtraSpaces(c *gin.Context) {}
+`
+	// Create temporary file
+	tmpDir := t.TempDir()
+	tmpPath := filepath.Join(tmpDir, "tags_test.go")
+	err := os.WriteFile(tmpPath, []byte(tmpFile), 0644)
+	assert.NoError(t, err)
+
+	// Test space-separated tags
+	doc, err := parseHandlerComments(tmpPath, "HandlerWithSpaceSeparatedTags")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Len(t, doc.Tags, 2)
+	assert.Contains(t, doc.Tags, "public")
+	assert.Contains(t, doc.Tags, "users")
+
+	// Test comma-separated tags
+	doc, err = parseHandlerComments(tmpPath, "HandlerWithCommaSeparatedTags")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Len(t, doc.Tags, 3)
+	assert.Contains(t, doc.Tags, "public")
+	assert.Contains(t, doc.Tags, "users")
+	assert.Contains(t, doc.Tags, "admin")
+
+	// Test mixed tags (comma and space)
+	doc, err = parseHandlerComments(tmpPath, "HandlerWithMixedTags")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Len(t, doc.Tags, 3)
+	assert.Contains(t, doc.Tags, "public")
+	assert.Contains(t, doc.Tags, "users")
+	assert.Contains(t, doc.Tags, "admin")
+
+	// Test single tag
+	doc, err = parseHandlerComments(tmpPath, "HandlerWithSingleTag")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Len(t, doc.Tags, 1)
+	assert.Contains(t, doc.Tags, "internal")
+
+	// Test no tags line
+	doc, err = parseHandlerComments(tmpPath, "HandlerNoTags")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Empty(t, doc.Tags)
+
+	// Test empty tags line
+	doc, err = parseHandlerComments(tmpPath, "HandlerEmptyTags")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Empty(t, doc.Tags)
+
+	// Test extra spaces in tags
+	doc, err = parseHandlerComments(tmpPath, "HandlerWithExtraSpaces")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Len(t, doc.Tags, 3)
+	assert.Contains(t, doc.Tags, "public")
+	assert.Contains(t, doc.Tags, "users")
+	assert.Contains(t, doc.Tags, "admin")
+}

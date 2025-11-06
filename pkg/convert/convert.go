@@ -64,16 +64,24 @@ func ConvertRoutesToTools(routes gin.RoutesInfo, registeredSchemas map[string]ty
 			}
 		}
 
+		// Extract tags from handler doc
+		var tags []string
+		if handlerDoc != nil && len(handlerDoc.Tags) > 0 {
+			tags = handlerDoc.Tags
+		}
+
 		tool := types.Tool{
 			Name:        operationID,
 			Description: description,
 			InputSchema: inputSchema,
+			Tags:        tags,
 		}
 
 		ttools = append(ttools, tool)
 		operations[operationID] = types.Operation{
 			Method: route.Method,
 			Path:   route.Path,
+			Tags:   tags,
 		}
 	}
 
@@ -248,6 +256,7 @@ type HandlerDoc struct {
 	Description string
 	Params      map[string]string
 	Returns     string
+	Tags        []string
 }
 
 // parseHandlerComments parses function documentation from source code
@@ -288,6 +297,25 @@ func parseHandlerComments(filePath string, handlerName string) (*HandlerDoc, err
 							}
 						case strings.HasPrefix(line, "@return"):
 							doc.Returns = strings.TrimSpace(strings.TrimPrefix(line, "@return"))
+						case strings.HasPrefix(line, "@tags"):
+							tagsText := strings.TrimSpace(strings.TrimPrefix(line, "@tags"))
+							// Split on spaces and commas, trim whitespace, ignore empty entries
+							var tags []string
+							for _, sep := range []string{",", " "} {
+								parts := strings.Split(tagsText, sep)
+								for _, part := range parts {
+									trimmed := strings.TrimSpace(part)
+									if trimmed != "" && !contains(tags, trimmed) {
+										tags = append(tags, trimmed)
+									}
+								}
+								// After first pass with commas, rejoin and split by spaces
+								if sep == "," {
+									tagsText = strings.Join(tags, " ")
+									tags = []string{}
+								}
+							}
+							doc.Tags = tags
 						}
 					}
 				}
@@ -317,4 +345,14 @@ func getHandlerInfo(handler gin.HandlerFunc) (string, string) {
 	shortName := parts[len(parts)-1]
 
 	return filePath, shortName
+}
+
+// contains checks if a string slice contains a specific string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }

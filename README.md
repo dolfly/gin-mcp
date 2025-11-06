@@ -106,6 +106,33 @@ That's it! Your MCP tools are now available at `http://localhost:8080/mcp`. Gin-
 
 While Gin-MCP strives for zero configuration, you can customize its behavior.
 
+### Annotating Handlers with Comments
+
+Gin-MCP automatically extracts metadata from handler function comments to generate rich tool descriptions. Use these annotations to make your MCP tools more discoverable and easier to use:
+
+```go
+// listProducts retrieves a paginated list of products
+// @summary List all products
+// @description Returns a paginated list of products with optional filtering by price, tags, and availability
+// @param page Page number for pagination (default: 1)
+// @param limit Number of items per page (default: 10, max: 100)
+// @param minPrice Minimum price filter
+// @param tag Filter products by tag
+// @tags public catalog
+func listProducts(c *gin.Context) {
+    // Handler implementation...
+}
+```
+
+**Supported Annotations:**
+
+-   **`@summary`** - Brief one-line description that becomes the tool's primary description
+-   **`@description`** - Additional detailed explanation appended to the summary
+-   **`@param <name> <text>`** - Attaches descriptive text to specific input parameters in the generated schema
+-   **`@tags`** - Space or comma-separated tags used for filtering tools (see "Filtering Exposed Endpoints" below)
+
+All annotations are optional, but using them makes your API tools much more user-friendly in MCP clients like Claude Desktop and Cursor.
+
 ### Fine-Grained Schema Control with `RegisterSchema`
 
 Sometimes, automatic schema inference isn't enough. `RegisterSchema` allows you to explicitly define schemas for query parameters or request bodies for specific routes. This is useful when:
@@ -177,28 +204,52 @@ func main() {
 
 ### Filtering Exposed Endpoints
 
-Control which Gin endpoints become MCP tools using operation IDs or tags (if your routes define them).
+Control which Gin endpoints become MCP tools using operation IDs or tags. Tags come from the `@tags` annotation in your handler comments (see "Annotating Handlers" above).
+
+#### Tag-Based Filtering
+
+Tags are specified in handler function comments using the `@tags` annotation. You can specify tags separated by spaces, commas, or both:
 
 ```go
-// Only include specific operations by their Operation ID (if defined in your routes)
+// listUsers handles user listing
+// @summary List all users
+// @tags public users
+func listUsers(c *gin.Context) {
+    // Implementation...
+}
+
+// deleteUser handles user deletion
+// @summary Delete a user
+// @tags admin, internal
+func deleteUser(c *gin.Context) {
+    // Implementation...
+}
+```
+
+#### Filtering Configuration
+
+```go
+// Only include specific operations by their Operation ID
 mcp := server.New(r, &server.Config{
     // ... other config ...
-    IncludeOperations: []string{"getUser", "listUsers"},
+    IncludeOperations: []string{"GET_users", "POST_users"},
 })
 
 // Exclude specific operations
 mcp := server.New(r, &server.Config{
     // ... other config ...
-    ExcludeOperations: []string{"deleteUser"}, // Don't expose deleteUser tool
+    ExcludeOperations: []string{"DELETE_users_id"}, // Don't expose delete tool
 })
 
 // Only include operations tagged with "public" or "users"
+// A tool is included if it has ANY of the specified tags
 mcp := server.New(r, &server.Config{
     // ... other config ...
     IncludeTags: []string{"public", "users"},
 })
 
 // Exclude operations tagged with "admin" or "internal"
+// A tool is excluded if it has ANY of the specified tags
 mcp := server.New(r, &server.Config{
     // ... other config ...
     ExcludeTags: []string{"admin", "internal"},
@@ -207,9 +258,29 @@ mcp := server.New(r, &server.Config{
 
 **Filtering Rules:**
 
--   You can only use *one* inclusion filter (`IncludeOperations` OR `IncludeTags`).
--   You can only use *one* exclusion filter (`ExcludeOperations` OR `ExcludeTags`).
--   You *can* combine an inclusion filter with an exclusion filter (e.g., include tag "public" but exclude operation "legacyPublicOp"). Exclusion takes precedence.
+-   You can only use **one** inclusion filter (`IncludeOperations` **OR** `IncludeTags`).
+    - If both are set, `IncludeOperations` takes precedence and a warning is logged.
+-   You can only use **one** exclusion filter (`ExcludeOperations` **OR** `ExcludeTags`).
+    - If both are set, `ExcludeOperations` takes precedence and a warning is logged.
+-   You **can** combine an inclusion filter with an exclusion filter (e.g., include tag "public" but exclude operation "legacyPublicOp").
+-   **Exclusion always wins**: If a tool matches both inclusion and exclusion filters, it will be excluded.
+-   **Tag matching**: A tool is included/excluded if it has **any** of the specified tags (OR logic).
+
+**Examples:**
+
+```go
+// Include all "public" endpoints but exclude those also tagged "internal"
+mcp := server.New(r, &server.Config{
+    IncludeTags: []string{"public"},
+    ExcludeTags: []string{"internal"},
+})
+
+// Include specific operations but exclude admin endpoints
+mcp := server.New(r, &server.Config{
+    IncludeOperations: []string{"GET_users", "GET_products"},
+    ExcludeTags:       []string{"admin"},  // This will be ignored (precedence rule)
+})
+```
 
 ### Customizing Schema Descriptions (Less Common)
 
