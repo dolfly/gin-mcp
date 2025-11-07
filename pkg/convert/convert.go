@@ -25,21 +25,43 @@ func isDebugMode() bool {
 func ConvertRoutesToTools(routes gin.RoutesInfo, registeredSchemas map[string]types.RegisteredSchemaInfo) ([]types.Tool, map[string]types.Operation) {
 	ttools := make([]types.Tool, 0)
 	operations := make(map[string]types.Operation)
+	usedOperationIDs := make(map[string]bool)
 
 	if isDebugMode() {
 		log.Printf("Starting conversion of %d routes to MCP tools...", len(routes))
 	}
 
 	for _, route := range routes {
-		// Simple operation ID generation (e.g., GET_users_id)
+		// Default operation ID generation (e.g., GET_users_id)
 		operationID := strings.ToUpper(route.Method) + strings.ReplaceAll(strings.ReplaceAll(route.Path, "/", "_"), ":", "")
+
+		filePath, handlerName := getHandlerInfo(route.HandlerFunc)
+		// Parse handler function comments
+		handlerDoc, _ := parseHandlerComments(filePath, handlerName)
+
+		// Override with custom @operationId if present
+		if handlerDoc != nil && handlerDoc.OperationID != "" {
+			customOpID := handlerDoc.OperationID
+			if usedOperationIDs[customOpID] {
+				// Always log duplicate warnings, not just in debug mode
+				log.Printf("Warning: Duplicate @operationId '%s' for route %s %s. Skipping this route to maintain consistency. First declaration wins.", customOpID, route.Method, route.Path)
+				continue // Skip this route entirely
+			}
+			operationID = customOpID
+		}
+
+		// Check for duplicates even with default IDs (shouldn't happen but be defensive)
+		if usedOperationIDs[operationID] {
+			log.Printf("Warning: Duplicate operation ID '%s' for route %s %s. Skipping this route.", operationID, route.Method, route.Path)
+			continue
+		}
+
+		// Track used operation IDs
+		usedOperationIDs[operationID] = true
 
 		if isDebugMode() {
 			log.Printf("Processing route: %s %s -> OpID: %s", route.Method, route.Path, operationID)
 		}
-		filePath, handlerName := getHandlerInfo(route.HandlerFunc)
-		// Parse handler function comments
-		handlerDoc, _ := parseHandlerComments(filePath, handlerName)
 
 		// Generate description information
 		description := fmt.Sprintf("Handler for %s %s", route.Method, route.Path)
@@ -257,6 +279,7 @@ type HandlerDoc struct {
 	Params      map[string]string
 	Returns     string
 	Tags        []string
+	OperationID string
 }
 
 // parseHandlerComments parses function documentation from source code
@@ -316,6 +339,11 @@ func parseHandlerComments(filePath string, handlerName string) (*HandlerDoc, err
 								}
 							}
 							doc.Tags = tags
+						case strings.HasPrefix(line, "@operationId"):
+							opID := strings.TrimSpace(strings.TrimPrefix(line, "@operationId"))
+							if opID != "" && doc.OperationID == "" {
+								doc.OperationID = opID
+							}
 						}
 					}
 				}

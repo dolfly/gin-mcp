@@ -206,6 +206,102 @@ func TestConvertRoutesToTools(t *testing.T) {
 
 }
 
+// customOpHandler handles a custom operation
+// @summary Custom operation handler
+// @operationId myCustomOp
+func customOpHandler(c *gin.Context) {}
+
+// defaultOpHandler handles a default operation
+// @summary Default operation handler
+func defaultOpHandler(c *gin.Context) {}
+
+// duplicateOpHandler1 has a duplicate operation ID
+// @summary First handler with duplicate ID
+// @operationId duplicateOp
+func duplicateOpHandler1(c *gin.Context) {}
+
+// duplicateOpHandler2 has the same operation ID (should be rejected)
+// @summary Second handler with duplicate ID
+// @operationId duplicateOp
+func duplicateOpHandler2(c *gin.Context) {}
+
+// TestConvertRoutesToTools_CustomOperationId tests custom @operationId annotation
+func TestConvertRoutesToTools_CustomOperationId(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+
+	// Register real handlers with @operationId comments
+	r.GET("/custom", customOpHandler)
+	r.GET("/default", defaultOpHandler)
+
+	routes := r.Routes()
+	schemas := make(map[string]types.RegisteredSchemaInfo)
+
+	// Convert routes
+	tools, operations := ConvertRoutesToTools(routes, schemas)
+
+	// Verify we have 2 tools
+	assert.Len(t, tools, 2)
+	assert.Len(t, operations, 2)
+
+	// Check that custom operation ID is used
+	assert.Contains(t, operations, "myCustomOp", "Should use custom operation ID")
+	assert.NotContains(t, operations, "GET_custom", "Should not use default operation ID for custom handler")
+
+	// Check that default operation ID is used when no @operationId
+	assert.Contains(t, operations, "GET_default", "Should use default operation ID when no @operationId")
+
+	// Find tools
+	var customTool, defaultTool *types.Tool
+	for i := range tools {
+		if tools[i].Name == "myCustomOp" {
+			customTool = &tools[i]
+		}
+		if tools[i].Name == "GET_default" {
+			defaultTool = &tools[i]
+		}
+	}
+
+	require.NotNil(t, customTool, "Custom operation tool should exist")
+	require.NotNil(t, defaultTool, "Default operation tool should exist")
+
+	// Verify operation details for custom ID
+	assert.Equal(t, "GET", operations["myCustomOp"].Method)
+	assert.Equal(t, "/custom", operations["myCustomOp"].Path)
+
+	// Verify operation details for default ID
+	assert.Equal(t, "GET", operations["GET_default"].Method)
+	assert.Equal(t, "/default", operations["GET_default"].Path)
+}
+
+// TestConvertRoutesToTools_DuplicateOperationId tests duplicate @operationId handling
+func TestConvertRoutesToTools_DuplicateOperationId(t *testing.T) {
+	gin.SetMode(gin.DebugMode) // Enable debug mode to capture logs
+	r := gin.New()
+
+	// Register handlers with duplicate operation IDs
+	r.GET("/first", duplicateOpHandler1)
+	r.GET("/second", duplicateOpHandler2)
+
+	routes := r.Routes()
+	schemas := make(map[string]types.RegisteredSchemaInfo)
+
+	// Convert routes
+	tools, operations := ConvertRoutesToTools(routes, schemas)
+
+	// Should only have 1 tool (duplicate should be skipped)
+	assert.Len(t, tools, 1, "Should skip duplicate operation ID")
+	assert.Len(t, operations, 1, "Operations map should have only one entry")
+
+	// Verify the first declaration wins
+	assert.Contains(t, operations, "duplicateOp")
+	assert.Equal(t, "GET", operations["duplicateOp"].Method)
+	assert.Equal(t, "/first", operations["duplicateOp"].Path, "First handler should win")
+
+	// Verify tool consistency
+	assert.Equal(t, "duplicateOp", tools[0].Name)
+}
+
 // --- Tests for generateInputSchema (called indirectly by ConvertRoutesToTools) ---
 // We test this indirectly via ConvertRoutesToTools, but add specific cases if needed.
 
@@ -578,6 +674,71 @@ func MultipleParams(c *gin.Context) {}
 	assert.Equal(t, "Username", strings.TrimSpace(doc.Params["name"]))
 	assert.Equal(t, "User age", strings.TrimSpace(doc.Params["age"]))
 	assert.Equal(t, "User information", strings.TrimSpace(doc.Returns))
+}
+
+func TestParseHandlerComments_OperationId(t *testing.T) {
+	tmpFile := `package test
+
+// HandlerWithOperationId handles something
+// @summary Handler with operation ID
+// @operationId customOperationId
+func HandlerWithOperationId(c *gin.Context) {}
+
+// HandlerWithSpacesInOperationId handles something
+// @summary Handler with spaces in operation ID
+// @operationId   customOpWithSpaces   
+func HandlerWithSpacesInOperationId(c *gin.Context) {}
+
+// HandlerWithDuplicateOperationId handles something
+// @summary Handler with duplicate operation ID annotations
+// @operationId firstOpId
+// @operationId secondOpId
+func HandlerWithDuplicateOperationId(c *gin.Context) {}
+
+// HandlerWithEmptyOperationId handles something
+// @summary Handler with empty operation ID
+// @operationId
+func HandlerWithEmptyOperationId(c *gin.Context) {}
+
+// HandlerNoOperationId handles something
+// @summary Handler without operation ID
+func HandlerNoOperationId(c *gin.Context) {}
+`
+	// Create temporary file
+	tmpDir := t.TempDir()
+	tmpPath := filepath.Join(tmpDir, "operationid_test.go")
+	err := os.WriteFile(tmpPath, []byte(tmpFile), 0644)
+	assert.NoError(t, err)
+
+	// Test valid operation ID
+	doc, err := parseHandlerComments(tmpPath, "HandlerWithOperationId")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "customOperationId", doc.OperationID)
+
+	// Test operation ID with spaces (should be trimmed)
+	doc, err = parseHandlerComments(tmpPath, "HandlerWithSpacesInOperationId")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "customOpWithSpaces", doc.OperationID)
+
+	// Test duplicate operation ID (should capture first only)
+	doc, err = parseHandlerComments(tmpPath, "HandlerWithDuplicateOperationId")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "firstOpId", doc.OperationID)
+
+	// Test empty operation ID
+	doc, err = parseHandlerComments(tmpPath, "HandlerWithEmptyOperationId")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Empty(t, doc.OperationID)
+
+	// Test no operation ID
+	doc, err = parseHandlerComments(tmpPath, "HandlerNoOperationId")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Empty(t, doc.OperationID)
 }
 
 func TestParseHandlerComments_Tags(t *testing.T) {

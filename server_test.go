@@ -197,13 +197,13 @@ func TestSetupServerAndFilter(t *testing.T) {
 
 func TestSetupServerAndFilter_Tags(t *testing.T) {
 	engine := gin.New()
-	
+
 	// Register handlers with tags
-	engine.GET("/items", listItems)       // tags: public, internal
-	engine.GET("/items/:id", getItem)     // tags: public
-	engine.POST("/items", createItem)     // tags: admin
+	engine.GET("/items", listItems)         // tags: public, internal
+	engine.GET("/items/:id", getItem)       // tags: public
+	engine.POST("/items", createItem)       // tags: admin
 	engine.DELETE("/items/:id", deleteItem) // tags: admin, internal
-	engine.GET("/health", healthCheck)    // no tags
+	engine.GET("/health", healthCheck)      // no tags
 
 	// --- Test IncludeTags Filter ---
 	t.Run("IncludeTags_PublicOnly", func(t *testing.T) {
@@ -212,7 +212,7 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Should include: listItems (public, internal) and getItem (public)
 		assert.Len(t, mcp.tools, 2, "Should have 2 tools with 'public' tag")
 		assert.True(t, toolExists(mcp.tools, "GET_items"), "Should include GET_items (has public tag)")
@@ -228,7 +228,7 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Should include: createItem (admin) and deleteItem (admin, internal)
 		assert.Len(t, mcp.tools, 2, "Should have 2 tools with 'admin' tag")
 		assert.True(t, toolExists(mcp.tools, "POST_items"), "Should include POST_items (has admin tag)")
@@ -242,7 +242,7 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Should include: listItems, getItem, createItem, deleteItem (all have public OR admin)
 		assert.Len(t, mcp.tools, 4, "Should have 4 tools with 'public' or 'admin' tags")
 		assert.True(t, toolExists(mcp.tools, "GET_items"))
@@ -259,7 +259,7 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Should exclude: listItems and deleteItem (both have 'internal' tag)
 		assert.Len(t, mcp.tools, 3, "Should have 3 tools without 'internal' tag")
 		assert.False(t, toolExists(mcp.tools, "GET_items"), "Should exclude GET_items (has internal tag)")
@@ -275,7 +275,7 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Should exclude: createItem and deleteItem (both have 'admin' tag)
 		assert.Len(t, mcp.tools, 3, "Should have 3 tools without 'admin' tag")
 		assert.True(t, toolExists(mcp.tools, "GET_items"))
@@ -289,11 +289,11 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 	t.Run("IncludeTags_and_ExcludeTags", func(t *testing.T) {
 		mcp := New(engine, &Config{
 			IncludeTags: []string{"public", "admin"}, // Include public and admin
-			ExcludeTags: []string{"internal"},         // But exclude internal
+			ExcludeTags: []string{"internal"},        // But exclude internal
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Include: listItems, getItem, createItem, deleteItem (all have public OR admin)
 		// Then exclude: listItems and deleteItem (both have internal)
 		// Result: getItem, createItem
@@ -313,7 +313,7 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Only GET_items should be included (operations take precedence)
 		assert.Len(t, mcp.tools, 1, "IncludeOperations should take precedence")
 		assert.True(t, toolExists(mcp.tools, "GET_items"))
@@ -327,7 +327,7 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// All tools except GET_health should be included (operations take precedence over tags)
 		assert.Len(t, mcp.tools, 4, "ExcludeOperations should take precedence")
 		assert.True(t, toolExists(mcp.tools, "GET_items"))
@@ -341,11 +341,11 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 	t.Run("ExcludeTags_Wins_Over_IncludeTags", func(t *testing.T) {
 		mcp := New(engine, &Config{
 			IncludeTags: []string{"public", "internal"}, // Include public and internal
-			ExcludeTags: []string{"internal"},            // But exclude internal
+			ExcludeTags: []string{"internal"},           // But exclude internal
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Include: listItems (public+internal), getItem (public), deleteItem (admin+internal)
 		// Then exclude: listItems and deleteItem (both have internal)
 		// Result: only getItem
@@ -362,7 +362,7 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Include: GET_items, POST_items
 		// Then exclude: GET_items
 		// Result: only POST_items
@@ -378,7 +378,7 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 		})
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Include: GET_items, POST_items, DELETE_items_id
 		// Then exclude by tag: GET_items (has internal), DELETE_items_id (has internal)
 		// Result: only POST_items
@@ -396,11 +396,11 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 			ExcludeOperations: []string{"POST_items"},
 			ExcludeTags:       []string{"admin"}, // Will be ignored but should not be cleared
 		}
-		
+
 		mcp := New(engine, config)
 		err := mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		// Verify original config is not mutated
 		assert.Len(t, config.IncludeOperations, 1, "IncludeOperations should not be modified")
 		assert.Equal(t, []string{"GET_items"}, config.IncludeOperations)
@@ -410,12 +410,12 @@ func TestSetupServerAndFilter_Tags(t *testing.T) {
 		assert.Equal(t, []string{"POST_items"}, config.ExcludeOperations)
 		assert.Len(t, config.ExcludeTags, 1, "ExcludeTags should not be cleared")
 		assert.Equal(t, []string{"admin"}, config.ExcludeTags)
-		
+
 		// Call SetupServer again and verify config is still intact
 		mcp.tools = []types.Tool{} // Force re-discovery
 		err = mcp.SetupServer()
 		assert.NoError(t, err)
-		
+
 		assert.Len(t, config.IncludeTags, 1, "IncludeTags should still be intact after second call")
 		assert.Equal(t, []string{"public"}, config.IncludeTags)
 		assert.Len(t, config.ExcludeTags, 1, "ExcludeTags should still be intact after second call")
@@ -602,7 +602,7 @@ func TestHaveToolsChanged(t *testing.T) {
 	assert.True(t, mcp.haveToolsChanged([]types.Tool{tool1}), "Different number of tools should be true")
 
 	// Compare different tool name
-	assert.True(t, mcp.haveToolsChanged([]types.Tool{tool1, {Name: "tool3"}}), "Different tool name should be true")
+	assert.True(t, mcp.haveToolsChanged([]types.Tool{tool1, types.Tool{Name: "tool3"}}), "Different tool name should be true")
 
 	// Compare different description
 	assert.True(t, mcp.haveToolsChanged([]types.Tool{tool1_updated, tool2}), "Different description should be true")
@@ -964,4 +964,64 @@ func deleteItem(c *gin.Context) {
 // @summary Health check
 func healthCheck(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
+}
+
+// TestHandleToolCall_CustomOperationId tests tool execution with custom operation IDs
+func TestHandleToolCall_CustomOperationId(t *testing.T) {
+	mcp := New(gin.New(), nil)
+
+	// Add a tool with custom operation ID
+	customTool := types.Tool{
+		Name:        "myCustomToolId",
+		Description: "Custom tool with operation ID",
+		InputSchema: &types.JSONSchema{
+			Type: "object",
+			Properties: map[string]*types.JSONSchema{
+				"input": {Type: "string"},
+			},
+			Required: []string{"input"},
+		},
+	}
+	mcp.tools = []types.Tool{customTool}
+	mcp.operations[customTool.Name] = types.Operation{Method: "GET", Path: "/custom"}
+
+	// Set up mock execution function
+	mcp.executeToolFunc = func(operationID string, parameters map[string]interface{}) (interface{}, error) {
+		assert.Equal(t, "myCustomToolId", operationID, "Should call with custom operation ID")
+		assert.Equal(t, "test-value", parameters["input"])
+		return map[string]interface{}{"status": "executed"}, nil
+	}
+
+	// Create tool call request with custom operation ID
+	callReq := &types.MCPMessage{
+		Jsonrpc: "2.0",
+		ID:      types.RawMessage(`"custom-call-1"`),
+		Method:  "tools/call",
+		Params: map[string]interface{}{
+			"name": "myCustomToolId",
+			"arguments": map[string]interface{}{
+				"input": "test-value",
+			},
+		},
+	}
+
+	// Execute and verify
+	resp := mcp.handleToolCall(callReq)
+	assert.NotNil(t, resp)
+	assert.Nil(t, resp.Error, "Should not have error for custom operation ID")
+	assert.Equal(t, callReq.ID, resp.ID)
+	assert.NotNil(t, resp.Result)
+
+	// Verify result structure
+	resultMap, ok := resp.Result.(map[string]interface{})
+	assert.True(t, ok)
+	contentList, ok := resultMap["content"].([]map[string]interface{})
+	assert.True(t, ok)
+	assert.Len(t, contentList, 1)
+
+	contentItem := contentList[0]
+	assert.Equal(t, string(types.ContentTypeText), contentItem["type"])
+	actualText, ok := contentItem["text"].(string)
+	assert.True(t, ok)
+	assert.JSONEq(t, `{"status":"executed"}`, actualText)
 }

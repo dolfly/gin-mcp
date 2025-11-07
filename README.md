@@ -130,8 +130,26 @@ func listProducts(c *gin.Context) {
 -   **`@description`** - Additional detailed explanation appended to the summary
 -   **`@param <name> <text>`** - Attaches descriptive text to specific input parameters in the generated schema
 -   **`@tags`** - Space or comma-separated tags used for filtering tools (see "Filtering Exposed Endpoints" below)
+-   **`@operationId <id>`** - Custom operation ID for the tool (overrides the default `METHOD_path` naming scheme). Must be unique across all routes; duplicates will be skipped (first declaration wins) with a warning logged.
 
 All annotations are optional, but using them makes your API tools much more user-friendly in MCP clients like Claude Desktop and Cursor.
+
+**Custom Operation IDs:**
+
+By default, Gin-MCP generates operation IDs using the format `METHOD_path` (e.g., `GET_users_id`). For routes with very long paths, you can use `@operationId` to specify a shorter, more manageable name:
+
+```go
+// getUserProfile retrieves a user's profile with extended metadata
+// @summary Get user profile
+// @operationId getUserProfile
+// @param id User identifier
+func getUserProfile(c *gin.Context) {
+    // Instead of the default "GET_api_v2_users_userId_profile_extended"
+    // this tool will be named "getUserProfile"
+}
+```
+
+**Important:** Operation IDs must be unique. If two handlers use the same `@operationId`, the duplicate will be skipped entirely (first declaration wins), and a warning will always be logged. This ensures consistency between the tool list and operations map.
 
 ### Fine-Grained Schema Control with `RegisterSchema`
 
