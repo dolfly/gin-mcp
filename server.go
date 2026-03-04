@@ -54,6 +54,11 @@ type Config struct {
 	ExcludeOperations []string
 	IncludeTags       []string
 	ExcludeTags       []string
+	// ForwardAuthHeaders enables forwarding of Authorization headers from MCP requests
+	// to internal tool execution HTTP calls. When enabled, the Authorization header from
+	// the SSE connection is captured and included in requests to tool endpoints.
+	// Default: false (for backward compatibility)
+	ForwardAuthHeaders bool
 }
 
 // New creates a new GinMCP instance
@@ -332,6 +337,16 @@ func (m *GinMCP) handleToolCall(msg *types.MCPMessage) *types.MCPMessage {
 		}
 	}
 
+	// Extract connection ID from params (injected by transport layer)
+	var connID string
+	if connIDVal, exists := reqParams["_mcpConnectionID"]; exists {
+		if connIDStr, ok := connIDVal.(string); ok {
+			connID = connIDStr
+			// Remove it from params so it doesn't get passed to tool execution
+			delete(reqParams, "_mcpConnectionID")
+		}
+	}
+
 	// Get tool name and arguments from the params
 	toolName, nameOk := reqParams["name"].(string)
 	// The actual arguments passed by the LLM are nested under "arguments"
@@ -341,6 +356,14 @@ func (m *GinMCP) handleToolCall(msg *types.MCPMessage) *types.MCPMessage {
 			Jsonrpc: "2.0", ID: msg.ID,
 			Error: map[string]interface{}{"code": -32602, "message": "Missing tool name or arguments"},
 		}
+	}
+
+	// Inject connection ID into toolArgs for auth forwarding (if enabled)
+	if connID != "" && m.config.ForwardAuthHeaders {
+		if toolArgs == nil {
+			toolArgs = make(map[string]interface{})
+		}
+		toolArgs["_mcpConnectionID"] = connID
 	}
 
 	// *** Add check for tool existence BEFORE executing ***
@@ -633,6 +656,22 @@ func (m *GinMCP) defaultExecuteTool(operationID string, parameters map[string]in
 // with different baseURL resolution strategies
 func (m *GinMCP) executeToolLogic(operation types.Operation, parameters map[string]interface{}, baseURL string) (interface{}, error) {
 
+	// Extract connection ID for auth forwarding (if present)
+	var authHeader string
+	if m.config.ForwardAuthHeaders {
+		if connIDVal, exists := parameters["_mcpConnectionID"]; exists {
+			if connID, ok := connIDVal.(string); ok && connID != "" {
+				// Get auth header from transport
+				authHeader = m.transport.GetAuthHeader(connID)
+				if isDebugMode() && authHeader != "" {
+					log.Printf("[Tool Execution] Forwarding auth header for connection %s", connID)
+				}
+			}
+			// Remove connection ID from parameters
+			delete(parameters, "_mcpConnectionID")
+		}
+	}
+
 	path := operation.Path
 	queryParams := url.Values{}
 	pathParams := make(map[string]string)
@@ -713,6 +752,14 @@ func (m *GinMCP) executeToolLogic(operation types.Operation, parameters map[stri
 	req.Header.Set("Accept", "application/json")
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	// Forward Authorization header if available
+	if authHeader != "" {
+		req.Header.Set("Authorization", authHeader)
+		if isDebugMode() {
+			log.Printf("[Tool Execution] Forwarding Authorization header")
+		}
 	}
 
 	if isDebugMode() {

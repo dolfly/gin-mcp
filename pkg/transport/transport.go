@@ -21,4 +21,7 @@ type Transport interface {
 
 	// NotifyToolsChanged sends a notification to connected clients that the tool list has changed.
 	NotifyToolsChanged()
+
+	// GetAuthHeader retrieves the Authorization header for a connection.
+	GetAuthHeader(connID string) string
 }
