@@ -44,6 +44,8 @@
 -   **Customizable Schemas:** Manually register schemas for specific routes using `RegisterSchema` for fine-grained control.
 -   **Selective Exposure:** Filter which endpoints are exposed using operation IDs or tags.
 -   **Flexible Deployment:** Mount the MCP server within the same Gin app or deploy it separately.
+-   **Streamable HTTP Transport:** Opt in to MCP spec 2025-03-26 for stateless, load-balancer-friendly deployments with no session affinity required.
+-   **Authorization Header Forwarding:** Automatically forward the client's `Authorization` header to every internal tool-execution call, enabling MCP access to JWT-protected APIs.
 
 ## Installation
 
@@ -346,12 +348,67 @@ mcp.SetExecuteToolFunc(func(operationID string, parameters map[string]interface{
 
 This eliminates the need for static BaseURL configuration at startup, perfect for multi-tenant proxy environments!
 
+### Streamable HTTP Transport (horizontal scaling)
+
+By default, Gin-MCP uses the **SSE transport** (MCP spec 2024-11-05), which requires a persistent GET connection to be routed to the **same pod** as subsequent POST requests. This forces load balancers to use session affinity (sticky sessions), which is incompatible with horizontal autoscaling and unsupported by many managed load balancers (e.g. GCP, AWS ALB).
+
+The **Streamable HTTP transport** (MCP spec 2025-03-26) solves this: every POST returns the JSON-RPC response directly in the HTTP body. No prior GET connection or pod affinity is required.
+
+```go
+mcp := server.New(r, &server.Config{
+    Name:          "My API",
+    BaseURL:       "https://api.example.com",
+    TransportType: server.TransportTypeStreamableHTTP,
+})
+mcp.Mount("/mcp")
+```
+
+MCP clients connect with a single `POST /mcp` — no prior GET needed.
+
+#### Origin validation (DNS rebinding protection)
+
+Per [MCP spec 2025-03-26 §Security](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#security-considerations), servers should validate the `Origin` header. Use `AllowedOrigins` to restrict browser-originated requests:
+
+```go
+mcp := server.New(r, &server.Config{
+    Name:          "My API",
+    BaseURL:       "https://api.example.com",
+    TransportType: server.TransportTypeStreamableHTTP,
+    // Only allow requests from this browser origin.
+    // Omit (or leave nil) when authentication already prevents unauthorised access.
+    AllowedOrigins: []string{"https://app.example.com"},
+})
+```
+
+- Requests **with** an `Origin` header not in the list → `403 Forbidden`.
+- Requests **without** an `Origin` header (server-to-server: `curl`, Node.js, etc.) → always allowed.
+- Empty / nil `AllowedOrigins` → all origins permitted (suitable when a Bearer token is required).
+
+### Authorization Header Forwarding
+
+When your Gin endpoints are protected by JWT Bearer tokens, you can forward the client's `Authorization` header to every internal tool-execution HTTP call:
+
+```go
+mcp := server.New(r, &server.Config{
+    Name:               "My API",
+    BaseURL:            "https://api.example.com",
+    ForwardAuthHeaders: true,
+})
+mcp.Mount("/mcp")
+```
+
+- **SSE transport**: the header is captured once at SSE connection time and reused for all subsequent tool calls on that connection.
+- **Streamable HTTP transport**: the header is captured per POST request (each call is independent).
+- Default: `false` (disabled, for backward compatibility).
+
 ## Connecting MCP Clients
 
 Once your Gin application with Gin-MCP is running:
 
 1.  Start your application.
-2.  In your MCP client, provide the URL where you mounted the MCP server (e.g., `http://localhost:8080/mcp`) as the SSE endpoint:
+2.  In your MCP client, provide the URL where you mounted the MCP server (e.g., `http://localhost:8080/mcp`):
+    - **SSE transport (default)**: connect as an SSE endpoint (GET then POST to the same path).
+    - **Streamable HTTP transport**: connect as a plain HTTP endpoint (POST only).
     - **Cursor**: Settings → MCP → Add Server
     - **Claude Desktop**: Add to MCP configuration file
     - **Continue**: Configure in VS Code settings

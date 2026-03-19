@@ -26,6 +26,8 @@ type mockTransport struct {
 	MockExecuteError  error
 	LastExecuteTool   *types.Tool
 	LastExecuteArgs   map[string]interface{}
+	// MockAuthHeader is returned by GetAuthHeader for testing ForwardAuthHeaders behaviour.
+	MockAuthHeader string
 }
 
 func newMockTransport() *mockTransport {
@@ -65,6 +67,8 @@ func (m *mockTransport) RemoveConnection(connID string) {
 }
 
 func (m *mockTransport) NotifyToolsChanged() { m.NotifiedToolsChanged = true }
+
+func (m *mockTransport) GetAuthHeader(connID string) string { return m.MockAuthHeader }
 
 // Mock executeTool behavior for handleToolCall tests
 func (m *mockTransport) executeTool(tool *types.Tool, args map[string]interface{}) interface{} {
@@ -475,6 +479,34 @@ func TestHandleInitialize_InvalidParams(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, -32602, errMap["code"].(int))
 	assert.Contains(t, errMap["message"].(string), "Invalid parameters format")
+}
+
+func TestHandleInitialize_StreamableHTTP(t *testing.T) {
+	mcp := New(gin.New(), &Config{
+		Name:          "MyServer",
+		TransportType: TransportTypeStreamableHTTP,
+	})
+	req := &types.MCPMessage{
+		Jsonrpc: "2.0",
+		ID:      types.RawMessage(`"init-sh-1"`),
+		Method:  "initialize",
+		Params:  map[string]interface{}{"clientInfo": "testClient"},
+	}
+
+	resp := mcp.handleInitialize(req)
+	assert.NotNil(t, resp)
+	assert.Equal(t, req.ID, resp.ID)
+	assert.Nil(t, resp.Error)
+	assert.NotNil(t, resp.Result)
+
+	resultMap, ok := resp.Result.(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, "2025-03-26", resultMap["protocolVersion"],
+		"Streamable HTTP transport must advertise protocol version 2025-03-26")
+	assert.Contains(t, resultMap, "capabilities")
+	serverInfo, ok := resultMap["serverInfo"].(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, "MyServer", serverInfo["name"])
 }
 
 func TestHandleToolsList(t *testing.T) {
@@ -928,6 +960,84 @@ func GetProduct(c *gin.Context) {
 // @return Created product information
 func CreateProduct(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "create product"})
+}
+
+func TestHandleToolCall_ForwardAuthHeaders(t *testing.T) {
+	dummyTool := types.Tool{
+		Name:        "do_something",
+		Description: "Does something",
+		InputSchema: &types.JSONSchema{
+			Type: "object",
+			Properties: map[string]*types.JSONSchema{
+				"param1": {Type: "string"},
+			},
+		},
+	}
+
+	// makeReq builds a tools/call message that includes _mcpConnectionID at the top level,
+	// as the transport layer injects it before passing the message to the handler.
+	makeReq := func(connID string) *types.MCPMessage {
+		return &types.MCPMessage{
+			Jsonrpc: "2.0",
+			ID:      types.RawMessage(`"fw-1"`),
+			Method:  "tools/call",
+			Params: map[string]interface{}{
+				"name":              dummyTool.Name,
+				"_mcpConnectionID":  connID,
+				"arguments":         map[string]interface{}{"param1": "v1"},
+			},
+		}
+	}
+
+	t.Run("Enabled_InjectsConnIDIntoToolArgs", func(t *testing.T) {
+		engine := gin.New()
+		mockT := newMockTransport()
+		mockT.MockAuthHeader = "Bearer secret-token"
+
+		mcp := New(engine, &Config{ForwardAuthHeaders: true})
+		mcp.transport = mockT
+		mcp.tools = []types.Tool{dummyTool}
+		mcp.operations[dummyTool.Name] = types.Operation{Method: "GET", Path: "/do"}
+
+		var capturedArgs map[string]interface{}
+		mcp.executeToolFunc = func(_ string, params map[string]interface{}) (interface{}, error) {
+			capturedArgs = params
+			return "ok", nil
+		}
+
+		resp := mcp.handleToolCall(makeReq("conn-abc"))
+		assert.Nil(t, resp.Error)
+		// _mcpConnectionID must be forwarded into toolArgs so that executeToolLogic
+		// can retrieve the auth header from the transport.
+		assert.Equal(t, "conn-abc", capturedArgs["_mcpConnectionID"],
+			"_mcpConnectionID should be in toolArgs when ForwardAuthHeaders is enabled")
+		// Regular args must still be present and unaffected.
+		assert.Equal(t, "v1", capturedArgs["param1"])
+	})
+
+	t.Run("Disabled_DoesNotInjectConnID", func(t *testing.T) {
+		engine := gin.New()
+		mockT := newMockTransport()
+
+		mcp := New(engine, &Config{ForwardAuthHeaders: false})
+		mcp.transport = mockT
+		mcp.tools = []types.Tool{dummyTool}
+		mcp.operations[dummyTool.Name] = types.Operation{Method: "GET", Path: "/do"}
+
+		var capturedArgs map[string]interface{}
+		mcp.executeToolFunc = func(_ string, params map[string]interface{}) (interface{}, error) {
+			capturedArgs = params
+			return "ok", nil
+		}
+
+		resp := mcp.handleToolCall(makeReq("conn-xyz"))
+		assert.Nil(t, resp.Error)
+		// _mcpConnectionID must NOT reach executeToolFunc when forwarding is disabled.
+		assert.NotContains(t, capturedArgs, "_mcpConnectionID",
+			"_mcpConnectionID should NOT be in toolArgs when ForwardAuthHeaders is disabled")
+		// Regular args must still be present and unaffected.
+		assert.Equal(t, "v1", capturedArgs["param1"])
+	})
 }
 
 // --- Handlers for tag filtering tests ---

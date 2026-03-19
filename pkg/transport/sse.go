@@ -25,11 +25,17 @@ const (
 	writeTimeout      = 10 * time.Second
 )
 
+// ConnectionContext holds the context for an SSE connection
+type ConnectionContext struct {
+	Channel    chan *types.MCPMessage
+	AuthHeader string // Authorization header from the SSE connection
+}
+
 // SSETransport handles MCP communication over Server-Sent Events.
 type SSETransport struct {
 	mountPath   string
 	handlers    map[string]MessageHandler
-	connections map[string]chan *types.MCPMessage
+	connections map[string]*ConnectionContext
 	hMu         sync.RWMutex // Mutex for handlers map
 	cMu         sync.RWMutex // Mutex for connections map
 }
@@ -42,7 +48,7 @@ func NewSSETransport(mountPath string) *SSETransport {
 	return &SSETransport{
 		mountPath:   mountPath,
 		handlers:    make(map[string]MessageHandler),
-		connections: make(map[string]chan *types.MCPMessage),
+		connections: make(map[string]*ConnectionContext),
 	}
 }
 
@@ -71,7 +77,7 @@ func (s *SSETransport) HandleConnection(c *gin.Context) {
 		if isDebugMode() {
 			log.Printf("[SSE] Connection %s already exists, closing old connection", connID)
 		}
-		close(existingChan)
+		close(existingChan.Channel)
 		s.RemoveConnection(connID)
 	}
 
@@ -85,11 +91,20 @@ func (s *SSETransport) HandleConnection(c *gin.Context) {
 	h.Set("Access-Control-Expose-Headers", "X-Connection-ID")
 	h.Set("X-Connection-ID", connID)
 
+	// Capture Authorization header for forwarding to tool execution
+	authHeader := c.Request.Header.Get("Authorization")
+
 	// Create buffered channel for messages
 	msgChan := make(chan *types.MCPMessage, 100)
 
+	// Create connection context with auth header
+	connCtx := &ConnectionContext{
+		Channel:    msgChan,
+		AuthHeader: authHeader,
+	}
+
 	// Add connection to registry
-	s.AddConnection(connID, msgChan)
+	s.AddConnection(connID, connCtx)
 
 	// Create a context with cancel for coordinating goroutines
 	ctx, cancel := context.WithCancel(c.Request.Context())
@@ -264,7 +279,7 @@ func (s *SSETransport) HandleMessage(c *gin.Context) {
 
 	// Check if connection exists
 	s.cMu.RLock()
-	msgChan, exists := s.connections[connID]
+	connCtx, exists := s.connections[connID]
 	activeConnections := s.getActiveConnections() // Get active connections for logging
 	s.cMu.RUnlock()
 
@@ -280,12 +295,23 @@ func (s *SSETransport) HandleMessage(c *gin.Context) {
 		return
 	}
 
+	// Extract message channel from connection context
+	msgChan := connCtx.Channel
+
 	// Read and parse message
 	var reqMsg types.MCPMessage
 	if err := c.ShouldBindJSON(&reqMsg); err != nil {
 		log.Errorf("[SSE] Failed to parse message: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid message format: %v", err)})
 		return
+	}
+
+	// Inject connection ID into message for auth forwarding
+	// Add _mcpConnectionID to params if params is a map
+	if reqMsg.Params != nil {
+		if paramsMap, ok := reqMsg.Params.(map[string]interface{}); ok {
+			paramsMap["_mcpConnectionID"] = connID
+		}
 	}
 
 	// Find handler
@@ -358,11 +384,11 @@ func (s *SSETransport) RegisterHandler(method string, handler MessageHandler) {
 	}
 }
 
-// AddConnection adds a connection channel to the map.
-func (s *SSETransport) AddConnection(connID string, msgChan chan *types.MCPMessage) {
+// AddConnection adds a connection context to the map.
+func (s *SSETransport) AddConnection(connID string, connCtx *ConnectionContext) {
 	s.cMu.Lock()
 	defer s.cMu.Unlock()
-	s.connections[connID] = msgChan
+	s.connections[connID] = connCtx
 	if isDebugMode() {
 		log.Printf("[Transport DEBUG] Added connection %s. Total: %d", connID, len(s.connections))
 	}
@@ -381,6 +407,17 @@ func (s *SSETransport) RemoveConnection(connID string) {
 	}
 }
 
+// GetAuthHeader retrieves the Authorization header for a connection.
+// Returns empty string if connection not found or no auth header was provided.
+func (s *SSETransport) GetAuthHeader(connID string) string {
+	s.cMu.RLock()
+	defer s.cMu.RUnlock()
+	if connCtx, exists := s.connections[connID]; exists {
+		return connCtx.AuthHeader
+	}
+	return ""
+}
+
 // NotifyToolsChanged sends a tools/listChanged notification to all connected clients.
 func (s *SSETransport) NotifyToolsChanged() {
 	notification := &types.MCPMessage{
@@ -392,8 +429,8 @@ func (s *SSETransport) NotifyToolsChanged() {
 	numConns := len(s.connections)
 	channels := make([]chan *types.MCPMessage, 0, numConns)
 	connIDs := make([]string, 0, numConns)
-	for id, ch := range s.connections {
-		channels = append(channels, ch)
+	for id, connCtx := range s.connections {
+		channels = append(channels, connCtx.Channel)
 		connIDs = append(connIDs, id)
 	}
 	s.cMu.RUnlock()
