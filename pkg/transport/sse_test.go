@@ -109,13 +109,13 @@ func TestSSETransport_AddRemoveConnection(t *testing.T) {
 	msgChan := make(chan *types.MCPMessage, 1)
 
 	// Add
-	s.AddConnection(connID, msgChan)
+	s.AddConnection(connID, &ConnectionContext{Channel: msgChan})
 	s.cMu.RLock()
-	retrievedChan, exists := s.connections[connID]
+	retrievedCtx, exists := s.connections[connID]
 	s.cMu.RUnlock()
 
 	assert.True(t, exists, "Connection should exist after adding")
-	assert.Equal(t, msgChan, retrievedChan, "Retrieved channel should match added channel")
+	assert.Equal(t, msgChan, retrievedCtx.Channel, "Retrieved channel should match added channel")
 
 	// Remove the connection
 	s.RemoveConnection(connID)
@@ -161,10 +161,10 @@ func TestSSETransport_HandleConnection(t *testing.T) {
 
 	// Verify connection was added
 	s.cMu.RLock()
-	msgChan, exists := s.connections[testSessionId]
+	connCtx, exists := s.connections[testSessionId]
 	s.cMu.RUnlock()
 	assert.True(t, exists, "Connection should be added")
-	assert.NotNil(t, msgChan)
+	assert.NotNil(t, connCtx)
 
 	// Verify headers (Check immediately after connection is confirmed, but acknowledge potential race)
 	// A more robust test might use channels to signal header writing completion.
@@ -175,7 +175,7 @@ func TestSSETransport_HandleConnection(t *testing.T) {
 
 	// Send a message to the connection
 	testMsg := &types.MCPMessage{Jsonrpc: "2.0", ID: types.RawMessage(`"test-id"`), Result: "test result"}
-	msgChan <- testMsg
+	connCtx.Channel <- testMsg
 
 	// Simulate client disconnect by cancelling the request context passed to HandleConnection
 	cancel() // Call the cancel function returned by setupTestGinContext
@@ -244,7 +244,7 @@ func TestSSETransport_HandleConnection_ExistingSession(t *testing.T) {
 	s := setupTestSSETransport("/mcp/events")
 	testSessionId := "existing-session-123"
 	oldChan := make(chan *types.MCPMessage, 1)
-	s.AddConnection(testSessionId, oldChan) // Add the "old" connection
+	s.AddConnection(testSessionId, &ConnectionContext{Channel: oldChan}) // Add the "old" connection
 
 	c, _, cancel := setupTestGinContext("GET", "/mcp/events", nil, map[string]string{"sessionId": testSessionId})
 
@@ -297,7 +297,7 @@ func TestSSETransport_HandleMessage_Success(t *testing.T) {
 	s := setupTestSSETransport("/mcp")
 	connID := "test-conn-handle-msg"
 	msgChan := make(chan *types.MCPMessage, 1)
-	s.AddConnection(connID, msgChan)
+	s.AddConnection(connID, &ConnectionContext{Channel: msgChan})
 	defer s.RemoveConnection(connID)
 
 	method := "test/success"
@@ -334,7 +334,7 @@ func TestSSETransport_HandleMessage_NoConnectionIdHeader(t *testing.T) {
 	s := setupTestSSETransport("/mcp")
 	connID := "test-conn-query"
 	msgChan := make(chan *types.MCPMessage, 1)
-	s.AddConnection(connID, msgChan)
+	s.AddConnection(connID, &ConnectionContext{Channel: msgChan})
 	defer s.RemoveConnection(connID)
 
 	method := "test/query"
@@ -393,7 +393,7 @@ func TestSSETransport_HandleMessage_BadRequestBody(t *testing.T) {
 	s := setupTestSSETransport("/mcp")
 	connID := "test-conn-bad-body"
 	msgChan := make(chan *types.MCPMessage, 1)
-	s.AddConnection(connID, msgChan)
+	s.AddConnection(connID, &ConnectionContext{Channel: msgChan})
 	defer s.RemoveConnection(connID)
 
 	reqBody := `{"jsonrpc":"2.0",,"id":"invalid"}` // Invalid JSON
@@ -419,7 +419,7 @@ func TestSSETransport_HandleMessage_HandlerNotFound(t *testing.T) {
 	s := setupTestSSETransport("/mcp")
 	connID := "test-conn-handler-nf"
 	msgChan := make(chan *types.MCPMessage, 1)
-	s.AddConnection(connID, msgChan)
+	s.AddConnection(connID, &ConnectionContext{Channel: msgChan})
 	defer s.RemoveConnection(connID)
 
 	reqBody := `{"jsonrpc":"2.0","id":"req-id-4","method":"unregistered/method","params":{}}`
@@ -483,8 +483,8 @@ func TestSSETransport_NotifyToolsChanged(t *testing.T) {
 	msgChan1 := make(chan *types.MCPMessage, 1)
 	msgChan2 := make(chan *types.MCPMessage, 1)
 
-	s.AddConnection(connID1, msgChan1)
-	s.AddConnection(connID2, msgChan2)
+	s.AddConnection(connID1, &ConnectionContext{Channel: msgChan1})
+	s.AddConnection(connID2, &ConnectionContext{Channel: msgChan2})
 	defer s.RemoveConnection(connID1)
 	defer s.RemoveConnection(connID2)
 

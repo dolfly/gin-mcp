@@ -45,6 +45,22 @@ type GinMCP struct {
 	executeToolFunc func(operationID string, parameters map[string]interface{}) (interface{}, error)
 }
 
+// TransportType selects the MCP transport protocol.
+type TransportType string
+
+const (
+	// TransportTypeSSE uses the original SSE-based transport (MCP spec 2024-11-05).
+	// Requires a persistent GET SSE connection before POSTing messages, which means
+	// load balancers must route both requests to the same pod (session affinity needed).
+	TransportTypeSSE TransportType = "sse"
+
+	// TransportTypeStreamableHTTP uses the modern Streamable HTTP transport (MCP spec 2025-03-26).
+	// Each POST is handled independently and the JSON-RPC response is returned directly
+	// in the HTTP body. No persistent connection or pod affinity is required, making this
+	// the recommended choice for horizontally-scaled deployments.
+	TransportTypeStreamableHTTP TransportType = "streamable-http"
+)
+
 // Config represents the configuration options for GinMCP
 type Config struct {
 	Name              string
@@ -56,9 +72,20 @@ type Config struct {
 	ExcludeTags       []string
 	// ForwardAuthHeaders enables forwarding of Authorization headers from MCP requests
 	// to internal tool execution HTTP calls. When enabled, the Authorization header from
-	// the SSE connection is captured and included in requests to tool endpoints.
+	// the connection is captured and included in requests to tool endpoints.
 	// Default: false (for backward compatibility)
 	ForwardAuthHeaders bool
+	// TransportType selects the MCP transport protocol.
+	// Default: TransportTypeSSE (for backward compatibility).
+	// Use TransportTypeStreamableHTTP for horizontally-scaled deployments.
+	TransportType TransportType
+	// AllowedOrigins is an optional list of permitted Origin header values for
+	// Streamable HTTP connections (e.g. ["https://app.example.com"]).
+	// When non-empty, requests carrying an Origin header not in this list are rejected
+	// with 403 Forbidden, preventing DNS rebinding attacks (MCP spec 2025-03-26 §Security).
+	// Server-to-server requests without an Origin header are always allowed.
+	// Default: nil (all origins permitted — rely on authentication for access control).
+	AllowedOrigins []string
 }
 
 // New creates a new GinMCP instance
@@ -163,7 +190,11 @@ func (m *GinMCP) Mount(mountPath string) {
 	}
 
 	// 2. Create transport and register handlers
-	m.transport = transport.NewSSETransport(mountPath)
+	if m.config.TransportType == TransportTypeStreamableHTTP {
+		m.transport = transport.NewStreamableHTTPTransport(mountPath, m.config.AllowedOrigins)
+	} else {
+		m.transport = transport.NewSSETransport(mountPath)
+	}
 	m.transport.RegisterHandler("initialize", m.handleInitialize)
 	m.transport.RegisterHandler("tools/list", m.handleToolsList)
 	m.transport.RegisterHandler("tools/call", m.handleToolCall)
@@ -263,12 +294,18 @@ func (m *GinMCP) handleInitialize(msg *types.MCPMessage) *types.MCPMessage {
 		log.Printf("Received initialize request with params: %+v", params)
 	}
 
-	// Return server capabilities with correct structure
+	// Return server capabilities with correct structure.
+	// Protocol version matches the transport: Streamable HTTP uses 2025-03-26, SSE uses 2024-11-05.
+	protocolVersion := "2024-11-05"
+	if m.config.TransportType == TransportTypeStreamableHTTP {
+		protocolVersion = "2025-03-26"
+	}
+
 	return &types.MCPMessage{
 		Jsonrpc: "2.0",
 		ID:      msg.ID,
 		Result: map[string]interface{}{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": protocolVersion,
 			"capabilities": map[string]interface{}{
 				"tools": map[string]interface{}{
 					"enabled": true,
