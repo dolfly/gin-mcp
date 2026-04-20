@@ -437,6 +437,42 @@ func toolExists(tools []types.Tool, name string) bool {
 	return false
 }
 
+func TestHandleLoggingSetLevel(t *testing.T) {
+	mcp := New(gin.New(), nil)
+	req := &types.MCPMessage{
+		Jsonrpc: "2.0",
+		ID:      types.RawMessage(`"log-1"`),
+		Method:  "logging/setLevel",
+		Params:  map[string]interface{}{"level": "debug"},
+	}
+
+	resp := mcp.handleLoggingSetLevel(req)
+	assert.NotNil(t, resp)
+	assert.Equal(t, req.ID, resp.ID)
+	assert.Nil(t, resp.Error)
+	resultMap, ok := resp.Result.(map[string]interface{})
+	assert.True(t, ok)
+	assert.Empty(t, resultMap)
+}
+
+func TestHandleLoggingSetLevel_InvalidLevel(t *testing.T) {
+	mcp := New(gin.New(), nil)
+	req := &types.MCPMessage{
+		Jsonrpc: "2.0",
+		ID:      types.RawMessage(`"log-2"`),
+		Method:  "logging/setLevel",
+		Params:  map[string]interface{}{"level": "trace"},
+	}
+
+	resp := mcp.handleLoggingSetLevel(req)
+	assert.NotNil(t, resp)
+	assert.Equal(t, req.ID, resp.ID)
+	assert.Nil(t, resp.Error)
+	resultMap, ok := resp.Result.(map[string]interface{})
+	assert.True(t, ok)
+	assert.Empty(t, resultMap)
+}
+
 func TestHandleInitialize(t *testing.T) {
 	mcp := New(gin.New(), &Config{Name: "MyServer"})
 	req := &types.MCPMessage{
@@ -982,9 +1018,9 @@ func TestHandleToolCall_ForwardAuthHeaders(t *testing.T) {
 			ID:      types.RawMessage(`"fw-1"`),
 			Method:  "tools/call",
 			Params: map[string]interface{}{
-				"name":              dummyTool.Name,
-				"_mcpConnectionID":  connID,
-				"arguments":         map[string]interface{}{"param1": "v1"},
+				"name":             dummyTool.Name,
+				"_mcpConnectionID": connID,
+				"arguments":        map[string]interface{}{"param1": "v1"},
 			},
 		}
 	}
