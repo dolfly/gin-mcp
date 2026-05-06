@@ -198,6 +198,7 @@ func (m *GinMCP) Mount(mountPath string) {
 	m.transport.RegisterHandler("initialize", m.handleInitialize)
 	m.transport.RegisterHandler("tools/list", m.handleToolsList)
 	m.transport.RegisterHandler("tools/call", m.handleToolCall)
+	m.transport.RegisterHandler("logging/setLevel", m.handleLoggingSetLevel)
 
 	// 3. Setup CORS middleware
 	m.engine.Use(func(c *gin.Context) {
@@ -319,9 +320,6 @@ func (m *GinMCP) handleInitialize(msg *types.MCPMessage) *types.MCPMessage {
 				"resources": map[string]interface{}{
 					"enabled": true,
 				},
-				"logging": map[string]interface{}{
-					"enabled": false,
-				},
 				"roots": map[string]interface{}{
 					"listChanged": false,
 				},
@@ -360,6 +358,17 @@ func (m *GinMCP) handleToolsList(msg *types.MCPMessage) *types.MCPMessage {
 				"count":   len(m.tools),
 			},
 		},
+	}
+}
+
+// handleLoggingSetLevel handles the logging/setLevel request.
+// gin-mcp does not implement log streaming, so this is a no-op that satisfies
+// MCP clients (e.g. Claude Inspector) that send this method on startup.
+func (m *GinMCP) handleLoggingSetLevel(msg *types.MCPMessage) *types.MCPMessage {
+	return &types.MCPMessage{
+		Jsonrpc: "2.0",
+		ID:      msg.ID,
+		Result:  map[string]interface{}{},
 	}
 }
 
@@ -878,7 +887,7 @@ func NewHeaderResolver(headerName string, fallback string) BaseURLResolver {
 		// 1. Thread-local storage
 		// 2. Context.Context passed through the call chain
 		// 3. Middleware that sets a global variable
-		
+
 		// For now, return fallback - see example usage for complete implementation
 		return fallback
 	}
@@ -901,7 +910,7 @@ func NewQuicknodeResolver(fallback string) BaseURLResolver {
 			}
 			return host
 		}
-		
+
 		return fallback
 	}
 }
@@ -917,7 +926,7 @@ func NewRAGFlowResolver(fallback string) BaseURLResolver {
 		if workflowURL := os.Getenv("RAGFLOW_WORKFLOW_URL"); workflowURL != "" {
 			return workflowURL
 		}
-		
+
 		// Try building from base URL and workflow ID
 		baseURL := os.Getenv("RAGFLOW_BASE_URL")
 		workflowID := os.Getenv("WORKFLOW_ID")
@@ -925,12 +934,12 @@ func NewRAGFlowResolver(fallback string) BaseURLResolver {
 			baseURL = strings.TrimSuffix(baseURL, "/")
 			return baseURL + "/workflow/" + workflowID
 		}
-		
+
 		// Try just base URL
 		if baseURL != "" {
 			return baseURL
 		}
-		
+
 		// Try generic HOST variable
 		if host := os.Getenv("HOST"); host != "" {
 			if !strings.HasPrefix(host, "http") {
@@ -938,7 +947,7 @@ func NewRAGFlowResolver(fallback string) BaseURLResolver {
 			}
 			return host
 		}
-		
+
 		return fallback
 	}
 }
