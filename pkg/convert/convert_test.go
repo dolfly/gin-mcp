@@ -807,6 +807,65 @@ func ListProducts(c *gin.Context) {}
 	assert.Equal(t, []string{"Product"}, doc.Tags)
 }
 
+// TestParseApidocBlockComments tests apidoc block comment format (/** ... */)
+func TestParseApidocBlockComments(t *testing.T) {
+	// This simulates how Go's AST parses block comments
+	// The fn.Doc.Text() returns lines with * prefix for block comments
+	tmpFile := `package test
+
+import "github.com/gin-gonic/gin"
+
+// OverallChannelList def
+/**
+* @api {post} /act/v1/overall/acg/channel 总体报表-渠道反作弊-渠道方风险-列表
+*
+* @apiGroup ACG APIS
+* @apiParam {String} stime 活动开始时间，格式：YYYYMMDD, 如20180511
+* @apiParam {String} etime 活动截止时间，格式：YYYYMMDD, 如20180511
+* @apiParam {String} [type] "pv", "uv" 默认pv
+* @apiParam {Number} [pn=1] 查询页码
+* @apiParam {Number} [pl=10] 每页数量
+* @apiVersion 2.2.0
+*/
+func OverallChannelList(c *gin.Context) {}
+
+/**
+* @api {get} /products/:id Get product details
+* @apiName GetProduct
+* @apiGroup Product
+* @apiDescription Get detailed information about a specific product
+* @apiParam {Number} id Product unique ID
+*/
+func GetProduct(c *gin.Context) {}
+`
+	tmpDir := t.TempDir()
+	tmpPath := filepath.Join(tmpDir, "apidoc_block_test.go")
+	err := os.WriteFile(tmpPath, []byte(tmpFile), 0644)
+	assert.NoError(t, err)
+
+	// Test OverallChannelList with block comment format
+	doc, err := parseHandlerComments(tmpPath, "OverallChannelList")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "总体报表-渠道反作弊-渠道方风险-列表", strings.TrimSpace(doc.Summary))
+	assert.Equal(t, []string{"ACG APIS"}, doc.Tags)
+	assert.Equal(t, "活动开始时间，格式：YYYYMMDD, 如20180511", strings.TrimSpace(doc.Params["stime"]))
+	assert.Equal(t, "活动截止时间，格式：YYYYMMDD, 如20180511", strings.TrimSpace(doc.Params["etime"]))
+	assert.Equal(t, "\"pv\", \"uv\" 默认pv", strings.TrimSpace(doc.Params["type"]))
+	assert.Equal(t, "查询页码", strings.TrimSpace(doc.Params["pn"]))
+	assert.Equal(t, "每页数量", strings.TrimSpace(doc.Params["pl"]))
+
+	// Test GetProduct with block comment format
+	doc, err = parseHandlerComments(tmpPath, "GetProduct")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "Get product details", strings.TrimSpace(doc.Summary))
+	assert.Equal(t, "Get detailed information about a specific product", strings.TrimSpace(doc.Description))
+	assert.Equal(t, "GetProduct", doc.OperationID)
+	assert.Equal(t, []string{"Product"}, doc.Tags)
+	assert.Equal(t, "Product unique ID", strings.TrimSpace(doc.Params["id"]))
+}
+
 // TestParseApidocComments_EdgeCases tests apidoc edge cases
 func TestParseApidocComments_EdgeCases(t *testing.T) {
 	tmpFile := `package test

@@ -322,6 +322,9 @@ func isApidocFormat(commentText string) bool {
 	lines := strings.Split(commentText, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
+		// Strip leading * from block comments
+		line = strings.TrimPrefix(line, "*")
+		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "@api ") || strings.HasPrefix(line, "@api\t") {
 			return true
 		}
@@ -333,6 +336,9 @@ func isApidocFormat(commentText string) bool {
 func parseApidocComments(commentText string, doc *HandlerDoc) {
 	lines := strings.Split(commentText, "\n")
 	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Strip leading * from block comments (/** ... */)
+		line = strings.TrimPrefix(line, "*")
 		line = strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(line, "@api "):
