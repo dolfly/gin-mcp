@@ -848,7 +848,7 @@ func GetProduct(c *gin.Context) {}
 	assert.NoError(t, err)
 	assert.NotNil(t, doc)
 	assert.Equal(t, "总体报表-渠道反作弊-渠道方风险-列表", strings.TrimSpace(doc.Summary))
-	assert.Equal(t, []string{"ACG APIS"}, doc.Tags)
+	assert.Equal(t, []string{"ACG", "APIS"}, doc.Tags)
 	assert.Equal(t, "活动开始时间，格式：YYYYMMDD, 如20180511", strings.TrimSpace(doc.Params["stime"]))
 	assert.Equal(t, "活动截止时间，格式：YYYYMMDD, 如20180511", strings.TrimSpace(doc.Params["etime"]))
 	assert.Equal(t, "\"pv\", \"uv\" 默认pv", strings.TrimSpace(doc.Params["type"]))

@@ -351,7 +351,14 @@ func parseApidocComments(commentText string, doc *HandlerDoc) {
 		case strings.HasPrefix(line, "@apiGroup "):
 			group := strings.TrimSpace(strings.TrimPrefix(line, "@apiGroup"))
 			if group != "" {
-				doc.Tags = []string{group}
+				// Split by spaces to support multiple tags
+				var tags []string
+				for _, part := range strings.Fields(group) {
+					if part != "" {
+						tags = append(tags, part)
+					}
+				}
+				doc.Tags = tags
 			}
 		case strings.HasPrefix(line, "@apiParam "):
 			// @apiParam [(group)] [{type}] [field=defaultValue] [description]
