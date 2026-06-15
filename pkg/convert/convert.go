@@ -283,6 +283,7 @@ type HandlerDoc struct {
 }
 
 // parseHandlerComments parses function documentation from source code
+// Supports both custom annotations (@summary, @description, etc.) and apidoc format (@api, @apiParam, etc.)
 func parseHandlerComments(filePath string, handlerName string) (*HandlerDoc, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
@@ -301,50 +302,12 @@ func parseHandlerComments(filePath string, handlerName string) (*HandlerDoc, err
 					Params: make(map[string]string),
 				}
 				if fn.Doc != nil {
-					// Parse comments
-					lines := strings.Split(fn.Doc.Text(), "\n")
-					for _, line := range lines {
-						line = strings.TrimSpace(line)
-						switch {
-						case strings.HasPrefix(line, "@summary"):
-							doc.Summary = strings.TrimSpace(strings.TrimPrefix(line, "@summary"))
-						case strings.HasPrefix(line, "@description"):
-							doc.Description = strings.TrimSpace(strings.TrimPrefix(line, "@description"))
-						case strings.HasPrefix(line, "@param"):
-							paramText := strings.TrimSpace(strings.TrimPrefix(line, "@param"))
-							parts := strings.SplitN(paramText, " ", 2)
-							if len(parts) == 2 {
-								paramName := strings.TrimSpace(parts[0])
-								paramDesc := strings.TrimSpace(parts[1])
-								doc.Params[paramName] = paramDesc
-							}
-						case strings.HasPrefix(line, "@return"):
-							doc.Returns = strings.TrimSpace(strings.TrimPrefix(line, "@return"))
-						case strings.HasPrefix(line, "@tags"):
-							tagsText := strings.TrimSpace(strings.TrimPrefix(line, "@tags"))
-							// Split on spaces and commas, trim whitespace, ignore empty entries
-							var tags []string
-							for _, sep := range []string{",", " "} {
-								parts := strings.Split(tagsText, sep)
-								for _, part := range parts {
-									trimmed := strings.TrimSpace(part)
-									if trimmed != "" && !contains(tags, trimmed) {
-										tags = append(tags, trimmed)
-									}
-								}
-								// After first pass with commas, rejoin and split by spaces
-								if sep == "," {
-									tagsText = strings.Join(tags, " ")
-									tags = []string{}
-								}
-							}
-							doc.Tags = tags
-						case strings.HasPrefix(line, "@operationId"):
-							opID := strings.TrimSpace(strings.TrimPrefix(line, "@operationId"))
-							if opID != "" && doc.OperationID == "" {
-								doc.OperationID = opID
-							}
-						}
+					// Check if this is apidoc format
+					if isApidocFormat(fn.Doc.Text()) {
+						parseApidocComments(fn.Doc.Text(), doc)
+					} else {
+						// Parse custom annotations
+						parseCustomComments(fn.Doc.Text(), doc)
 					}
 				}
 			}
@@ -352,6 +315,208 @@ func parseHandlerComments(filePath string, handlerName string) (*HandlerDoc, err
 	}
 
 	return doc, nil
+}
+
+// isApidocFormat checks if the comment block uses apidoc format (has @api annotation)
+func isApidocFormat(commentText string) bool {
+	lines := strings.Split(commentText, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "@api ") || strings.HasPrefix(line, "@api\t") {
+			return true
+		}
+	}
+	return false
+}
+
+// parseApidocComments parses apidoc style annotations
+func parseApidocComments(commentText string, doc *HandlerDoc) {
+	lines := strings.Split(commentText, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "@api "):
+			// @api {method} path title
+			parseApiAnnotation(line, doc)
+		case strings.HasPrefix(line, "@apiDescription "):
+			doc.Description = strings.TrimSpace(strings.TrimPrefix(line, "@apiDescription"))
+		case strings.HasPrefix(line, "@apiName "):
+			doc.OperationID = strings.TrimSpace(strings.TrimPrefix(line, "@apiName"))
+		case strings.HasPrefix(line, "@apiGroup "):
+			group := strings.TrimSpace(strings.TrimPrefix(line, "@apiGroup"))
+			if group != "" {
+				doc.Tags = []string{group}
+			}
+		case strings.HasPrefix(line, "@apiParam "):
+			// @apiParam [(group)] [{type}] [field=defaultValue] [description]
+			parseApiParamAnnotation(line, doc)
+		}
+	}
+}
+
+// parseApiAnnotation parses @api {method} path title
+func parseApiAnnotation(line string, doc *HandlerDoc) {
+	// Remove @api prefix
+	content := strings.TrimSpace(strings.TrimPrefix(line, "@api"))
+	// Find {method}
+	start := strings.Index(content, "{")
+	end := strings.Index(content, "}")
+	if start == -1 || end == -1 || end <= start {
+		return
+	}
+	// Extract title (everything after path)
+	remaining := strings.TrimSpace(content[end+1:])
+	// Skip path, extract title
+	parts := strings.Fields(remaining)
+	if len(parts) > 1 {
+		// First part is path, rest is title
+		title := strings.Join(parts[1:], " ")
+		if title != "" {
+			doc.Summary = title
+		}
+	} else if len(parts) == 1 {
+		// Only path, no title - use default summary
+		doc.Summary = "API endpoint"
+	}
+}
+
+// parseApiParamAnnotation parses @apiParam [(group)] [{type}] [field=defaultValue] [description]
+func parseApiParamAnnotation(line string, doc *HandlerDoc) {
+	// Remove @apiParam prefix
+	content := strings.TrimSpace(strings.TrimPrefix(line, "@apiParam"))
+
+	// Skip optional group in parentheses
+	if strings.HasPrefix(content, "(") {
+		endParen := strings.Index(content, ")")
+		if endParen != -1 {
+			content = strings.TrimSpace(content[endParen+1:])
+		}
+	}
+
+	// Skip type in braces
+	if strings.HasPrefix(content, "{") {
+		endBrace := strings.Index(content, "}")
+		if endBrace != -1 {
+			content = strings.TrimSpace(content[endBrace+1:])
+		}
+	}
+
+	// Parse field and description
+	// Field can be: field, [field], field=default, [field=default]
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+
+	// Extract field name (handle optional and default value)
+	var fieldName string
+	rest := content
+
+	// Check if optional (starts with [)
+	if strings.HasPrefix(rest, "[") {
+		// Find matching closing bracket, handling nested brackets
+		depth := 1
+		endBracket := -1
+		for i := 1; i < len(rest); i++ {
+			if rest[i] == '[' {
+				depth++
+			} else if rest[i] == ']' {
+				depth--
+				if depth == 0 {
+					endBracket = i
+					break
+				}
+			}
+		}
+		if endBracket != -1 {
+			fieldPart := rest[1:endBracket]
+			// Remove default value if present
+			if eqIdx := strings.Index(fieldPart, "="); eqIdx != -1 {
+				fieldName = fieldPart[:eqIdx]
+			} else {
+				fieldName = fieldPart
+			}
+			rest = strings.TrimSpace(rest[endBracket+1:])
+		}
+	} else {
+		// Not optional
+		parts := strings.Fields(rest)
+		if len(parts) > 0 {
+			fieldPart := parts[0]
+			// Remove default value if present
+			if eqIdx := strings.Index(fieldPart, "="); eqIdx != -1 {
+				fieldName = fieldPart[:eqIdx]
+			} else {
+				fieldName = fieldPart
+			}
+			rest = strings.TrimSpace(strings.TrimPrefix(rest, fieldPart))
+		}
+	}
+
+	// Handle nested field names like parent[child] -> extract "child"
+	// This handles the case where fieldPart contains nested brackets (e.g., "address[city]")
+	if strings.Contains(fieldName, "[") && strings.HasSuffix(fieldName, "]") {
+		startBracket := strings.Index(fieldName, "[")
+		endBracket := strings.LastIndex(fieldName, "]")
+		if startBracket != -1 && endBracket != -1 && endBracket > startBracket {
+			fieldName = fieldName[startBracket+1 : endBracket]
+		}
+	}
+
+	fieldName = strings.TrimSpace(fieldName)
+	rest = strings.TrimSpace(rest)
+
+	if fieldName != "" && rest != "" {
+		doc.Params[fieldName] = rest
+	}
+}
+
+// parseCustomComments parses custom annotations (@summary, @description, @param, @return, @tags, @operationId)
+func parseCustomComments(commentText string, doc *HandlerDoc) {
+	lines := strings.Split(commentText, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "@summary"):
+			doc.Summary = strings.TrimSpace(strings.TrimPrefix(line, "@summary"))
+		case strings.HasPrefix(line, "@description"):
+			doc.Description = strings.TrimSpace(strings.TrimPrefix(line, "@description"))
+		case strings.HasPrefix(line, "@param"):
+			paramText := strings.TrimSpace(strings.TrimPrefix(line, "@param"))
+			parts := strings.SplitN(paramText, " ", 2)
+			if len(parts) == 2 {
+				paramName := strings.TrimSpace(parts[0])
+				paramDesc := strings.TrimSpace(parts[1])
+				doc.Params[paramName] = paramDesc
+			}
+		case strings.HasPrefix(line, "@return"):
+			doc.Returns = strings.TrimSpace(strings.TrimPrefix(line, "@return"))
+		case strings.HasPrefix(line, "@tags"):
+			tagsText := strings.TrimSpace(strings.TrimPrefix(line, "@tags"))
+			// Split on spaces and commas, trim whitespace, ignore empty entries
+			var tags []string
+			for _, sep := range []string{",", " "} {
+				parts := strings.Split(tagsText, sep)
+				for _, part := range parts {
+					trimmed := strings.TrimSpace(part)
+					if trimmed != "" && !contains(tags, trimmed) {
+						tags = append(tags, trimmed)
+					}
+				}
+				// After first pass with commas, rejoin and split by spaces
+				if sep == "," {
+					tagsText = strings.Join(tags, " ")
+					tags = []string{}
+				}
+			}
+			doc.Tags = tags
+		case strings.HasPrefix(line, "@operationId"):
+			opID := strings.TrimSpace(strings.TrimPrefix(line, "@operationId"))
+			if opID != "" && doc.OperationID == "" {
+				doc.OperationID = opID
+			}
+		}
+	}
 }
 
 func getHandlerInfo(handler gin.HandlerFunc) (string, string) {

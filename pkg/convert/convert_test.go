@@ -741,6 +741,150 @@ func HandlerNoOperationId(c *gin.Context) {}
 	assert.Empty(t, doc.OperationID)
 }
 
+// TestParseApidocComments tests apidoc format parsing
+func TestParseApidocComments(t *testing.T) {
+	tmpFile := `package test
+
+import "github.com/gin-gonic/gin"
+
+// @api {get} /user/:id Get user information
+// @apiName GetUser
+// @apiGroup User
+// @apiDescription Get detailed user information by ID
+// @apiParam {Number} id Users unique ID
+// @apiParam {String} [firstname] Optional firstname
+// @apiParam {String} country="DE" Mandatory with default
+func GetUser(c *gin.Context) {}
+
+// @api {post} /user Create new user
+// @apiName CreateUser
+// @apiGroup User
+// @apiParam {String} name Username
+// @apiParam {String} email User email address
+// @apiParam (login) {String} pass User password
+func CreateUser(c *gin.Context) {}
+
+// @api {get} /products List products
+// @apiGroup Product
+// @apiDescription Retrieve a list of all products
+func ListProducts(c *gin.Context) {}
+`
+	// Create temporary file
+	tmpDir := t.TempDir()
+	tmpPath := filepath.Join(tmpDir, "apidoc_test.go")
+	err := os.WriteFile(tmpPath, []byte(tmpFile), 0644)
+	assert.NoError(t, err)
+
+	// Test GetUser with full apidoc annotations
+	doc, err := parseHandlerComments(tmpPath, "GetUser")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "Get user information", strings.TrimSpace(doc.Summary))
+	assert.Equal(t, "Get detailed user information by ID", strings.TrimSpace(doc.Description))
+	assert.Equal(t, "GetUser", doc.OperationID)
+	assert.Equal(t, []string{"User"}, doc.Tags)
+	assert.Equal(t, "Users unique ID", strings.TrimSpace(doc.Params["id"]))
+	assert.Equal(t, "Optional firstname", strings.TrimSpace(doc.Params["firstname"]))
+	assert.Equal(t, "Mandatory with default", strings.TrimSpace(doc.Params["country"]))
+
+	// Test CreateUser with group parameter
+	doc, err = parseHandlerComments(tmpPath, "CreateUser")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "Create new user", strings.TrimSpace(doc.Summary))
+	assert.Equal(t, "CreateUser", doc.OperationID)
+	assert.Equal(t, "Username", strings.TrimSpace(doc.Params["name"]))
+	assert.Equal(t, "User email address", strings.TrimSpace(doc.Params["email"]))
+	assert.Equal(t, "User password", strings.TrimSpace(doc.Params["pass"]))
+
+	// Test ListProducts without @apiName
+	doc, err = parseHandlerComments(tmpPath, "ListProducts")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "List products", strings.TrimSpace(doc.Summary))
+	assert.Equal(t, "Retrieve a list of all products", strings.TrimSpace(doc.Description))
+	assert.Empty(t, doc.OperationID) // No @apiName
+	assert.Equal(t, []string{"Product"}, doc.Tags)
+}
+
+// TestParseApidocComments_EdgeCases tests apidoc edge cases
+func TestParseApidocComments_EdgeCases(t *testing.T) {
+	tmpFile := `package test
+
+import "github.com/gin-gonic/gin"
+
+// @api {get} /minimal
+// @apiGroup Minimal
+func MinimalEndpoint(c *gin.Context) {}
+
+// @api {put} /update/:id Update resource
+// @apiName UpdateResource
+// @apiParam {String} [address[city]] Optional nested city
+// @apiParam {Number} age Users age
+func UpdateResource(c *gin.Context) {}
+`
+	tmpDir := t.TempDir()
+	tmpPath := filepath.Join(tmpDir, "apidoc_edge_test.go")
+	err := os.WriteFile(tmpPath, []byte(tmpFile), 0644)
+	assert.NoError(t, err)
+
+	// Test minimal endpoint (no title)
+	doc, err := parseHandlerComments(tmpPath, "MinimalEndpoint")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "API endpoint", doc.Summary) // Default when no title
+
+	// Test nested field name
+	doc, err = parseHandlerComments(tmpPath, "UpdateResource")
+	assert.NoError(t, err)
+	assert.NotNil(t, doc)
+	assert.Equal(t, "Update resource", doc.Summary)
+	// Nested field should extract "city" from "address[city]"
+	assert.Equal(t, "Optional nested city", strings.TrimSpace(doc.Params["city"]))
+	assert.Equal(t, "Users age", strings.TrimSpace(doc.Params["age"]))
+}
+
+// TestIsApidocFormat tests detection of apidoc format
+func TestIsApidocFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		comment  string
+		expected bool
+	}{
+		{
+			name: "apidoc format",
+			comment: `@api {get} /user Get user
+@apiName GetUser
+@apiGroup User`,
+			expected: true,
+		},
+		{
+			name: "custom format with @api (tab)",
+			comment: `@api	{get} /user Get user`,
+			expected: true,
+		},
+		{
+			name: "custom format",
+			comment: `@summary Get user
+@description Get user details
+@param id User ID`,
+			expected: false,
+		},
+		{
+			name:     "empty comment",
+			comment:  "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isApidocFormat(tt.comment)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestParseHandlerComments_Tags(t *testing.T) {
 	tmpFile := `package test
 
