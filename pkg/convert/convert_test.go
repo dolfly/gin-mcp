@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ckanthony/gin-mcp/pkg/types"
+	"github.com/dolfly/gin-mcp/pkg/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

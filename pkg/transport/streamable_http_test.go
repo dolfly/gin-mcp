@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ckanthony/gin-mcp/pkg/types"
+	"github.com/dolfly/gin-mcp/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

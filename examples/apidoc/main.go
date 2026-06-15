@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	server "github.com/ckanthony/gin-mcp"
+	server "github.com/dolfly/gin-mcp"
 	"github.com/gin-gonic/gin"
 )
 

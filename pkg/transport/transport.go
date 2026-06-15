@@ -1,7 +1,7 @@
 package transport
 
 import (
-	"github.com/ckanthony/gin-mcp/pkg/types"
+	"github.com/dolfly/gin-mcp/pkg/types"
 	"github.com/gin-gonic/gin"
 )
 

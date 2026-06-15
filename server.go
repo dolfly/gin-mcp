@@ -16,9 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/ckanthony/gin-mcp/pkg/convert"
-	"github.com/ckanthony/gin-mcp/pkg/transport"
-	"github.com/ckanthony/gin-mcp/pkg/types"
+	"github.com/dolfly/gin-mcp/pkg/convert"
+	"github.com/dolfly/gin-mcp/pkg/transport"
+	"github.com/dolfly/gin-mcp/pkg/types"
 
 	log "github.com/sirupsen/logrus"
 )
